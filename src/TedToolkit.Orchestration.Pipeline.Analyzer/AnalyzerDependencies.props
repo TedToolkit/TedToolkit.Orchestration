@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <_TedPipelineAnalyzerOutput>$(MSBuildThisFileDirectory)bin/$(Configuration)/netstandard2.0/</_TedPipelineAnalyzerOutput>
+  </PropertyGroup>
+  <ItemGroup>
+    <_TedPipelineAnalyzerDependency Include="$(_TedPipelineAnalyzerOutput)TedToolkit.RoslynHelper.dll" />
+    <_TedPipelineAnalyzerDependency Include="$(_TedPipelineAnalyzerOutput)ZString.dll" />
+    <_TedPipelineAnalyzerDependency Include="$(_TedPipelineAnalyzerOutput)System.Memory.dll" />
+    <Analyzer Include="@(_TedPipelineAnalyzerDependency)" />
+  </ItemGroup>
+</Project>

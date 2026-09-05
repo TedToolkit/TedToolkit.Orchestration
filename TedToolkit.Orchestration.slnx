@@ -1,0 +1,41 @@
+<Solution>
+  <Folder Name="/SolutionItems/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
+    <File Path=".gitignore" />
+    <File Path=".gitmodules" />
+    <File Path="COPYING" />
+    <File Path="COPYING.LESSER" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="README.md" />
+    <File Path="build.ps1" />
+    <File Path="build.sh" />
+  </Folder>
+  <Folder Name="/.github/workflows/">
+    <File Path=".github/workflows/build.yml" />
+  </Folder>
+  <Folder Name="/build/">
+    <Project Path="build/TedToolkit.Orchestration.Build/TedToolkit.Orchestration.Build.csproj">
+      <Build Project="false" />
+    </Project>
+  </Folder>
+  <Folder Name="/playground/">
+    <Project Path="playground/TedToolkit.Orchestration.Pipeline.Playground/TedToolkit.Orchestration.Pipeline.Playground.csproj">
+      <Build Project="false" />
+    </Project>
+    <Project Path="playground/TedToolkit.Orchestration.StateMachine.Playground/TedToolkit.Orchestration.StateMachine.Playground.csproj">
+      <Build Project="false" />
+    </Project>
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/TedToolkit.Orchestration.Pipeline.Analyzer/TedToolkit.Orchestration.Pipeline.Analyzer.csproj" />
+    <Project Path="src/TedToolkit.Orchestration.Pipeline/TedToolkit.Orchestration.Pipeline.csproj" />
+    <Project Path="src/TedToolkit.Orchestration.StateMachine.Analyzer/TedToolkit.Orchestration.StateMachine.Analyzer.csproj" />
+    <Project Path="src/TedToolkit.Orchestration.StateMachine/TedToolkit.Orchestration.StateMachine.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TedToolkit.Orchestration.Pipeline.Tests/TedToolkit.Orchestration.Pipeline.Tests.csproj" />
+    <Project Path="tests/TedToolkit.Orchestration.StateMachine.Tests/TedToolkit.Orchestration.StateMachine.Tests.csproj" />
+  </Folder>
+</Solution>

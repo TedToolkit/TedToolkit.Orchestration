@@ -1,0 +1,12 @@
+.vs/
+.idea/
+bin/
+obj/
+temp/
+*.user
+*.g.cs
+output/
+artifacts/
+build/TedToolkit.Orchestration.Build/appsettings.json
+BenchmarkDotNet.Artifacts/
+benchmarks/**/results/
