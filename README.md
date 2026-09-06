@@ -1,280 +1,252 @@
 # TedToolkit.Orchestration
 
-A .NET 10 compile-time orchestration library. Pipeline generates strongly typed execution from static step relationships; StateMachine generates state storage, trigger routing and guard selection from partial declarations. Each runtime package includes its matching generator and diagnostics.
+Strongly typed, compile-time orchestration for .NET 10. The repository contains two independent libraries: **Pipeline** generates execution code for a static dependency graph, while **StateMachine** generates enum-state routing, guards, lifecycle callbacks, and transition notifications.
 
-## Why use it?
+[![Build](https://github.com/TedToolkit/TedToolkit.Orchestration/actions/workflows/build.yml/badge.svg?branch=development)](https://github.com/TedToolkit/TedToolkit.Orchestration/actions/workflows/build.yml)
 
-- **Less coordination code.** Describe dependencies once; generated execution shares upstream results, starts independent async work concurrently, and handles retry, cooperative timeout and cancellation.
-- **Feedback at build time.** Typed inputs and results, nullability checks and graph diagnostics catch invalid wiring. Usage diagnostics flag declaration APIs called as runtime work.
-- **Small runtime machinery.** No runtime graph traversal, reflection-based Step activation or interface boxing. Synchronous graphs generate synchronous methods; default asynchronous Steps can reuse business Tasks.
-- **Inspectable output.** Generated code uses direct Step calls and ordinary tasks. Every attempt constructs a fresh ref-struct Step; typed Results expose intermediate values by name.
+Both runtime packages include their matching analyzer and source generator. Consumers write declarations; the compiler validates them and emits direct, typed execution code.
 
-Use it for static, in-process orchestration. It does not provide durable workflows, distributed scheduling, streaming backpressure or graphs assembled dynamically at runtime. See the [product intent](docs/product/README.md).
+## Choose a package
 
-Performance depends on the workload. See the [latest comparison](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/retry-exhaustion-benchmark.md) against handwritten code, WorkflowFramework, PipelineNet and TPL Dataflow, including allocation costs and measurement limits.
+| Package | Use it when | Main result |
+| --- | --- | --- |
+| `TedToolkit.Orchestration.Pipeline` | A fixed in-process operation has typed steps, dependencies, independent branches, retries, timeouts, cancellation, or DI inputs | A generated executor with typed parameters and results |
+| `TedToolkit.Orchestration.StateMachine` | An enum-backed model has statically known triggers, guarded routes, entry/exit behavior, and observable transitions | A generated machine with strict, `Try...Async`, and `Can...Async` trigger APIs |
 
-## State machine quick start
+Start with the [Pipeline playground](playground/TedToolkit.Orchestration.Pipeline.Playground/Program.cs) or [StateMachine playground](playground/TedToolkit.Orchestration.StateMachine.Playground/Program.cs) when you want a complete runnable example.
 
-Reference `TedToolkit.Orchestration.StateMachine`. A machine declares its enum type in `[StateMachine<TState>]`; the generated partial declaration adds `StateMachine<TState>` and a constructor that accepts the initial state, so consumers do not write the base class. Supplying a state to the attribute additionally generates a parameterless constructor that starts there.
+## Why this library exists
 
-```csharp
-using TedToolkit.Orchestration.StateMachine;
+Small orchestration code often begins as a few method calls and gradually accumulates dependency plumbing, task coordination, cancellation rules, retry loops, guard selection, lifecycle ordering, and result transport. Handwritten code can remain the fastest and simplest answer, but maintaining those semantics repeatedly is expensive and error-prone.
 
-var order = new OrderMachine();
-order.Transitioned += (_, transition) =>
-    Console.WriteLine($"Committed: {transition.Source} -> {transition.Destination}");
-order.TransitionCompleted += (_, transition) =>
-    Console.WriteLine($"Completed: {transition.Source} -> {transition.Destination}");
-await order.SubmitAsync();
+General-purpose workflow and state-machine libraries solve broader problems through runtime models. That flexibility is valuable when graphs must be assembled dynamically, workflows must survive a process, messages need backpressure, or state topology changes at runtime. It is unnecessary overhead when the topology is already known to the compiler.
 
-public enum OrderState
-{
-    Draft,
-    Returned,
-    Reviewing,
-    Approved,
-    Rejected,
-    ManualReview,
-}
+TedToolkit.Orchestration occupies the middle ground:
 
-[StateMachine<OrderState>(OrderState.Draft)]
-public sealed partial class OrderMachine
-{
-    public int ItemCount { get; set; }
+- declarations remain ordinary C# and are validated during compilation;
+- generated control flow uses direct typed calls rather than runtime graph traversal or reflection-based activation;
+- unsupported or ambiguous declarations fail with actionable diagnostics instead of falling back to a different runtime meaning;
+- generated code keeps dependencies, cancellation, retry, lifecycle, and ownership rules inspectable;
+- consumers pay for enabled behavior rather than a universal runtime engine.
 
-    [TransitionTo(OrderState.Reviewing, OrderState.Draft, OrderState.Returned)]
-    public partial ValueTask SubmitAsync();
+The goal is not to replace every workflow or state-machine library. It is to make **static, in-process orchestration** safer and less repetitive without hiding its runtime cost.
 
-    private bool CanSubmit() => ItemCount > 0;
+See the approved [product intent](docs/product/README.md), [Pipeline design principles](docs/principles/README.md), [Pipeline architecture](docs/architecture/pipeline-system.md), and [StateMachine architecture](docs/architecture/state-machine-system.md).
 
-    [TransitionTo(OrderState.Approved, OrderState.Reviewing, Guard = nameof(CanApprove))]
-    [TransitionTo(OrderState.Rejected, OrderState.Reviewing, Guard = nameof(CanReject))]
-    [TransitionOtherwiseTo(OrderState.ManualReview, OrderState.Reviewing)]
-    public partial ValueTask ReviewAsync(int score);
+## Why not use something else?
 
-    private bool CanApprove(int score) => score >= 80;
-    private bool CanReject(int score) => score < 40;
+The right choice depends on the problem boundary. The alternatives below are not interchangeable feature sets; they are included because they represent useful neighboring approaches.
 
-    [OnExit(OrderState.Draft, OrderState.Returned)]
-    private void LeaveEditableState() { }
+| Approach | Prefer it when | TedToolkit's different trade-off |
+| --- | --- | --- |
+| Handwritten orchestration | The flow is tiny, unique, and minimizing every abstraction cost matters more than reusable policies or compile-time graph checks | Generates the repetitive coordination while retaining typed, direct execution |
+| WorkflowFramework | Its runtime typed-pipeline/workflow model and broader workflow abstractions fit the application | Resolves a static graph at compilation and emits a dedicated executor |
+| PipelineNet | Middleware-style runtime composition is the desired programming model | Models typed data dependencies rather than an invocation middleware chain |
+| TPL Dataflow | Streaming, buffering, backpressure, and multiple messages in flight are first-class requirements | Targets request-style execution of one static dependency graph |
+| Stateless or Appccelerate.StateMachine | Runtime configuration and their broader state-machine feature sets are more important than generated direct dispatch | Validates enum routes at compilation and keeps the common trigger path small |
+| Durable/distributed workflow engines | Work must persist, resume, coordinate services, or survive process failure | Deliberately remains in-process and non-durable |
 
-    [OnEntry(OrderState.Reviewing)]
-    private void EnterReviewing() { }
+The benchmark adapters compare only matched micro-workloads. They do not erase differences in features, lifecycle, streaming behavior, persistence, or configuration models.
 
-    [OnEntryFrom(OrderState.Reviewing, nameof(SubmitAsync))]
-    private ValueTask EnterReviewingFromSubmitAsync() => ValueTask.CompletedTask;
-}
-```
+## Quick start: Pipeline
 
-Omit the attribute argument when every caller should select the state explicitly:
-
-```csharp
-[StateMachine<OrderState>]
-public sealed partial class RestoredOrderMachine
-{
-    // Trigger declarations...
-}
-
-var restored = new RestoredOrderMachine(savedState);
-```
-
-Even when the attribute supplies a default, the generated `OrderMachine(OrderState initialState)` constructor remains available for restoring or explicitly selecting another state.
-
-`TransitionTo` takes the target first and one or more allowed source states after it. A single candidate automatically uses a compatible `Can<Trigger>` method, which may return `bool`, `Task<bool>`, or `ValueTask<bool>`. Multiple candidates from the same source require explicit, mutually exclusive guards; `TransitionOtherwiseTo` is the fallback when none accepts the invocation. Guards bind trigger parameters by name and exact type.
-
-The declared trigger is strict and throws `TriggerRejectedException` when the current state or guards reject it. The generator also supplies `CanSubmitAsync` and `TrySubmitAsync`; the latter returns `TriggerResult<TState>` for expected rejection without throwing. Pass a new or persisted enum value to the generated constructor.
-
-A machine rejects nested triggers invoked from its guards, lifecycle hooks, or transition-event callbacks. Both strict triggers and `Try...Async` throw `ReentrantTriggerException`; `Can...Async` remains available as a side-effect-free query. Callback protection is cleared even when user code throws. This is deliberately not synchronization: there is no lock or queue, and callers still own concurrent access to a shared instance.
-
-Optional behavior is attached to arbitrarily named methods with `OnExit(state)`, `OnEntry(state)`, and `OnEntryFrom(state, nameof(trigger))`. The analyzer verifies that an `OnEntryFrom` trigger exists and can enter the attributed state. Hooks return `void`, `Task`, or `ValueTask`, and their parameters are selected from the trigger by exact name and type; `CancellationToken` is passed automatically. Synchronous and asynchronous guards and hooks may be mixed in one transition; `async void` hooks are rejected.
-
-The generated order is guard selection → source exit → state commit → `Transitioned` → target entry → trigger-specific target entry → `TransitionCompleted`, matching Stateless notification timing. Both public events carry a strongly typed `StateTransition<TState>` with source and destination values. When both entry forms match, `OnEntry` runs before `OnEntryFrom`. `Can...Async` and rejected triggers publish no events. An exit exception keeps the source state and publishes nothing; an entry exception propagates with the target already committed and only `Transitioned` published. Subscriber exceptions propagate at their notification point. One handler of each lifecycle kind may match a route, so ordering metadata is unnecessary.
-
-State machine declarations must be sealed, top-level, non-generic partial classes without an explicit base class. The generator supplies `Machine(TState initialState)`; additional consumer constructors must chain to it or directly to `base(initialState)`. Trigger declarations remain public partial `ValueTask` methods with by-value parameters and an optional final `CancellationToken`; synchronous public triggers are not supported. Invalid or ambiguous static declarations produce `TTSM001` and no machine implementation.
-
-State changes belong to generated triggers. Assigning the inherited `State` property in consumer source produces `TTSM002`, because a direct write would bypass lifecycle handlers and transition events. `State`, `Transitioned`, `TransitionCompleted`, their protected raisers, generated execution members, generated `Try...Async` / `Can...Async` companions, and the generated initial-state constructor are reserved surfaces; rename conflicting consumer members.
-
-In the current local .NET 10 follow-up measurement, a generated observable toggle with reentry protection and no event subscribers measured 32.06 ns with 0 B allocated. The latest full comparison measured Stateless at 300.60 ns / 1,208 B and Appccelerate at 282.60 ns / 1,544 B in the same workload, in an earlier run. See the [full StateMachine comparison](benchmarks/TedToolkit.Orchestration.StateMachine.Benchmarks/library-comparison.md) for guarded transitions, capability queries, construction, raw reports, versions, and measurement limits.
-
-## Pipeline quick start
-
-Reference `TedToolkit.Orchestration.Pipeline` from a feed containing your build. Install `Microsoft.Extensions.DependencyInjection` to use Microsoft's container. The package targets .NET 10; consumers do not need interceptor configuration or a preview language setting.
+Add `TedToolkit.Orchestration.Pipeline` from the feed that contains your build. The package targets .NET 10 and brings its analyzer with it. Add `Microsoft.Extensions.DependencyInjection` when using Microsoft's container.
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using TedToolkit.Orchestration.Pipeline;
-using TedToolkit.Orchestration.Pipeline.Attributes;
 
 using var services = new ServiceCollection().BuildServiceProvider();
-var executor = new ReportPipeline(services);
-var results = await executor.ExecuteAsync(leftValue: 40, formatPrefix: "sum");
-Console.WriteLine(results.Format); // sum: 42
-await executor.ExecuteWithoutResultsAsync(leftValue: 10, formatPrefix: "again");
+var pipeline = new SumPipeline(services);
+var results = pipeline.Execute(leftValue: 40);
 
-public sealed partial class ReportPipeline : Pipeline
+Console.WriteLine(results.Add); // 42
+
+public sealed partial class SumPipeline : Pipeline
 {
     protected override void Configuration(Builder pipeline)
     {
-        var left = pipeline.Delay();
-        var right = pipeline.Delay(2);
-        var sum = pipeline.Add(left, right);
-        var format = pipeline.Format(sum);
-        pipeline.Write(format);
+        var left = pipeline.Value();
+        var right = pipeline.Value(2);
+        var add = pipeline.Add(left, right);
     }
 }
 
-[StepPolicy(RetryCount = 1, TimeoutMilliseconds = 2000)]
-internal readonly ref struct Delay(int value) : IAsyncStep<int>
+internal readonly ref struct Value(int value) : IStep<int>
 {
-    public Task<int> ExecuteAsync(CancellationToken token = default) => RunAsync(value, token);
-    private static async Task<int> RunAsync(int value, CancellationToken token)
-    {
-        await Task.Delay(10, token);
-        return value;
-    }
+    public int Execute(CancellationToken token = default) => value;
 }
+
 internal readonly ref struct Add(int a, int b) : IStep<int>
 {
     public int Execute(CancellationToken token = default) => a + b;
 }
-internal readonly ref struct Format(int value, string prefix) : IStep<string>
-{
-    public string Execute(CancellationToken token = default) => $"{prefix}: {value}";
-}
-internal readonly ref struct Write(string value) : IStep
-{
-    public void Execute(CancellationToken token = default) => Console.WriteLine(value);
-}
 ```
 
-Inherit `Pipeline` and override `protected void Configuration(Builder pipeline)`. `Pipeline.Builder` is a single runtime type shared by all pipelines. The generator supplies Step extension methods, a public constructor taking `IServiceProvider`, typed `Results` and both execution methods. The class must be a non-generic, top-level partial class without an explicit constructor. Configuration is analyzed at compile time and is never invoked by the generated executor. Constants are mirrored into generated Step methods; other argument expressions are evaluated once when that Step becomes ready in each invocation. Seal the concrete pipeline class or mark the method `protected sealed override`: further overrides would replace configuration while leaving the generated execution graph unchanged, so the generator rejects them.
+The generator turns the omitted `Value` argument into the `leftValue` execution parameter, recognizes the fixed value `2`, binds both results into the named `add` node, and generates the typed `Results.Add` property. An asynchronous step changes the entry point to `ExecuteAsync`; completion-only callers use `ExecuteWithoutResults` or `ExecuteWithoutResultsAsync`.
 
-Existing `Configure(Builder pipeline, ...)` declarations remain supported, including extra constructor-time parameters. These classes must also explicitly inherit the runtime Pipeline base. The generator checks symbol identity along the inheritance chain and does not add a base type to generated partial declarations; unrelated classes with similarly named configuration methods are ignored. Use exactly one configuration entry point per pipeline. The override uses the single `Pipeline.Builder` parameter required by the base contract. Import `TedToolkit.Orchestration.Pipeline` to bring the generated Step extensions into scope.
+Pipeline also supports:
 
-## Bindings and names
+- independent branches that start without waiting for unrelated work;
+- constructor parameters resolved from ordinary or keyed DI via `[FromServices]`;
+- per-step retry and cooperative timeout through `[StepPolicy]`;
+- caller cancellation and draining of all work started by a parallel invocation;
+- typed intermediate results without an untyped runtime result store.
 
-| Configuration argument | Meaning |
-| --- | --- |
-| Omitted, or `default(StepArgument<T>)` | A required execution parameter |
-| A fixed value | Constants are mirrored; expressions are evaluated once per Step invocation and reused by retries |
-| A preceding node handle | That node's result for the current invocation |
-| Step constructor parameter `[FromServices] IService service` | Resolved from DI; absent from configuration and execution parameters |
-| Step constructor parameter `[FromServices(key: "blue")] IService service` | Resolved from keyed DI; absent from configuration and execution parameters |
+Configuration must remain statically analyzable: register each step in an unconditional statement, declare dependencies before consumers, and move dynamic behavior into a step. Read [declaration and execution semantics](docs/architecture/named-executors.md) for the full contract.
 
-`[FromServices]` and `[FromServices(key: null)]` resolve ordinary services. Any non-null string (including `""`) resolves that exact key using `GetRequiredKeyedService`; a missing keyed registration fails without falling back to an ordinary service. Register it with, for example, `services.AddKeyedScoped<IFormatter, Formatter>("blue")`.
+## Quick start: StateMachine
 
-All non-service factory parameters are optional `StepArgument<T>` values. Their generic type checks fixed values and dependencies. Upstream types must match exactly, including nullability. Omitting an argument exposes it even when the Step constructor itself declares a default. Use `default(int)` or `(string?)null` for a fixed default/null value; an untyped `default` leaves the slot unbound.
-
-Execution parameters follow node registration order, then constructor parameter order. Names combine the node name and original parameter name: `load` + `path` becomes `loadPath`. Unnamed nodes use the Step type and zero-based registration index: `LoadStep0` + `path` becomes `loadStep0Path`. A copied handle retains the original name and identity. Naming collisions are diagnostics; rename the nodes to resolve them. Different source parameters are separate execution arguments even when their types match.
-
-Keep each registration in its own unconditional statement in Configuration (or legacy Configure). Declare upstream nodes before their consumers. Local aliases of node handles are supported; reassignment, builder aliases/escape, conditional registration, loops and early returns are rejected. Initialized local values are mirrored once per consuming Step, in declaration order, before its argument expressions. Unused locals are not evaluated; values shared across several Steps are evaluated separately for each consuming Step. Use an upstream Step when computation must be shared. Standalone executable statements, local functions and mutable/ref locals are rejected; put behavior in a Step or a class helper method. Step factory names must be unique among the available generated extensions.
-
-For existing pipelines that take extra constructor-time configuration inputs, the legacy Configure form remains available:
+Add `TedToolkit.Orchestration.StateMachine` from the feed that contains your build. Declare an enum, mark a sealed partial class, and describe each trigger with attributes:
 
 ```csharp
-private void Configure(Builder pipeline, int offset)
+using TedToolkit.Orchestration.StateMachine;
+
+var door = new DoorMachine();
+door.TransitionCompleted += (_, transition) =>
+    Console.WriteLine($"{transition.Source} -> {transition.Destination}");
+
+await door.OpenAsync();
+
+public enum DoorState
 {
-    var sum = pipeline.Add(b: offset);
+    Closed,
+    Open,
 }
-// Generated constructor: ExamplePipeline(IServiceProvider services, int offset)
-// Generated execution parameter: int sumA
+
+[StateMachine<DoorState>(DoorState.Closed)]
+public sealed partial class DoorMachine
+{
+    [TransitionTo(DoorState.Open, DoorState.Closed)]
+    public partial ValueTask OpenAsync();
+
+    [TransitionTo(DoorState.Closed, DoorState.Open)]
+    public partial ValueTask CloseAsync();
+}
 ```
 
-## Execution and results
+For each declared trigger the generator supplies:
 
-The generated entry points depend on the configured Step contracts:
+- the strict trigger, which throws `TriggerRejectedException` when no route is accepted;
+- `Try...Async`, which returns `TriggerResult<TState>` for expected rejection;
+- `Can...Async`, which evaluates state and guards without running lifecycle callbacks;
+- constructors for an explicit initial state and, when specified in the attribute, the default state.
 
-| Graph | With typed results | Completion only |
-| --- | --- | --- |
-| All Steps synchronous, including an empty graph | Results Execute(...) | void ExecuteWithoutResults(...) |
-| At least one asynchronous Step | Task<Results> ExecuteAsync(...) | Task ExecuteWithoutResultsAsync(...) |
+Multiple guarded routes may use synchronous, `Task<bool>`, or `ValueTask<bool>` guards. `OnExit`, `OnEntry`, and `OnEntryFrom` callbacks may return `void`, `Task`, or `ValueTask`. The generated order is guard selection → exit → state commit → `Transitioned` → entry → trigger-specific entry → `TransitionCompleted`.
 
-Both entries take the same inputs and optional cancellation token. Results is a generated readonly struct with a typed property for each result-bearing node. Resultless Steps execute without adding result properties. Synchronous failures throw directly; asynchronous failures are reported through the returned task.
+StateMachine is intentionally not a concurrency controller. It rejects same-instance trigger reentry from guards, callbacks, and event handlers, but callers still own synchronization when sharing an instance across concurrent operations. Read the [StateMachine architecture](docs/architecture/state-machine-system.md) for rejection, failure, lifecycle, and ownership semantics.
 
-Each registration has a private Step method. It evaluates arguments and resolves services once, then constructs a fresh Step for each attempt. StepAttempt owns retry and timeout state. Synchronous disposal finishes before completion or retry; asynchronous cleanup belongs to the returned operation.
+## Benchmark snapshot
 
-Parallel execution starts Step tasks directly. Each consumer awaits only its own dependencies, so unrelated work can progress independently. Execute owns a linked CancellationTokenSource: external cancellation or a terminal failure signals other Steps, and Task.WhenAll waits for all started work before returning. Cancellation is cooperative; Steps must observe the token. Concurrent exception selection follows Task.WhenAll, and cancellation exceptions can carry the linked execution token.
+These are local BenchmarkDotNet 0.15.8 measurements recorded on 2026-09-05 using .NET 10.0.11 and an Intel Core i7-12700H. They are evidence for the measured workloads, not universal rankings.
 
-Without retry or timeout, serial asynchronous Steps reuse the business Task when no extra cancellation observation is needed. Completion-only execution avoids collecting the Results snapshot. Neither API promises zero allocation for asynchronous work.
+### Pipeline: four-operation yielding workloads
 
-The caller owns the service provider and its scope. Pipelines never dispose injected services. Configuration is never called during construction or execution; its local expressions are mirrored into generated Step methods.
+| Implementation | Chain mean / allocation | Diamond mean / allocation |
+| --- | ---: | ---: |
+| Handwritten tasks | 3.44 μs / 560 B | 5.13 μs / 720 B |
+| TedPipeline | 3.36 μs / 688 B | 4.33 μs / 1,697 B |
+| WorkflowFramework | 3.47 μs / 1,032 B | 8.05 μs / 4,429 B |
+| PipelineNet | 10.46 μs / 2,878 B | Not represented |
+| TPL Dataflow | 13.65 μs / 2,173 B | 14.45 μs / 2,318 B |
 
-## Measured performance
+The chain intervals overlap, so the small difference between handwritten, TedPipeline, and WorkflowFramework is inconclusive. TedPipeline's diamond mean is lower than handwritten in this run, but the handwritten interval is wide and overlaps; this is not proof of a general speed advantage. Pure synchronous completion-only execution measured 11.95 ns and 0 B versus 2.54 ns and 0 B handwritten.
 
-This local .NET 10 run used two launches per case. Values below are means for small arithmetic workloads that suspend with Task.Yield; construction and policies were excluded.
+[Method, complete tables, confidence intervals, versions, and limitations](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/retry-exhaustion-benchmark.md)
 
-| Workload | Handwritten | TedPipeline | WorkflowFramework | PipelineNet | TPL Dataflow |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Chain | 3.44 μs | 3.36 μs | 3.47 μs | 10.46 μs | 13.65 μs |
-| Diamond | 5.13 μs | 4.33 μs | 8.05 μs | — | 14.45 μs |
+### StateMachine: generated direct dispatch
 
-The yielding chain is comparable to handwritten timing; its interval overlaps WorkflowFramework's, so the small differences are inconclusive. Allocation is 688 B for TedPipeline versus 1,032 B for the WorkflowFramework chain adapter. The diamond allocates 1,697 B versus 4,429 B for its WorkflowFramework adapter. Its mean is below handwritten in this run, but the handwritten interval is wide and overlaps, so this does not establish a timing win.
+| Workload | TedToolkit | Stateless 5.20.1 | Appccelerate 6.0.0 |
+| --- | ---: | ---: | ---: |
+| Observable toggle | 30.40 ns / 0 B | 300.60 ns / 1,208 B | 282.60 ns / 1,544 B |
+| Guard + exit + entry | 32.36 ns / 0 B | 376.87 ns / 1,208 B | 414.91 ns / 1,544 B |
+| Capability query | 4.87 ns / 0 B | 143.24 ns / 616 B | Not represented |
 
-Pure synchronous completion-only execution allocates 0 B, but averages 11.95 ns versus 2.54 ns handwritten. These adapters have different responsibilities: this is a static request-latency comparison, not a streaming or durable-workflow ranking. [Full results, raw measurements, error intervals, versions and reproducible evidence](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/retry-exhaustion-benchmark.md).
+A later TedToolkit-only run that included callback-boundary reentry protection measured 32.06 ns / 0 B for the observable toggle and 55.87 ns / 0 B for guard plus lifecycle callbacks. The comparison libraries were not rerun, so no cross-run ratio is claimed.
 
-## Trimming
+[Method, construction results, complete tables, and limitations](benchmarks/TedToolkit.Orchestration.StateMachine.Benchmarks/library-comparison.md)
 
-Source generators cannot delete handwritten methods from an ordinary compilation. Generated executors have no runtime reference to Configuration, so publishing with trimming can remove it. The runtime package is marked IsTrimmable and the Playground enables PublishTrimmed. A self-contained Release publish with TrimMode=link has been verified to remove Configuration from both the Playground and runtime assemblies. Reflection roots or explicit calls in a consumer can still keep a method alive.
+## Scope and constraints
 
-## Step contracts and policies
+TedToolkit.Orchestration is designed for:
 
-| Contract | Method |
-| --- | --- |
-| `IStep` | `void Execute(CancellationToken)` |
-| `IStep<T>` | `T Execute(CancellationToken)` |
-| `IAsyncStep` | `Task ExecuteAsync(CancellationToken)` |
-| `IAsyncStep<T>` | `Task<T> ExecuteAsync(CancellationToken)` |
+- statically visible, in-process graphs and enum-state routes;
+- applications that can recompile when the bundled generator changes;
+- caller-owned DI scopes, cancellation boundaries, and shared-instance synchronization;
+- cooperative cancellation rather than forced termination;
+- generated code that can be inspected and trimmed when consumer code does not root declarations.
 
-Each Step must be an `internal ref struct` implementing exactly one contract with a public execution method. Prefer readonly when possible. Async Steps start an operation and return its Task; move async bodies into a static helper or service. The Step instance cannot survive an await. Synchronous Steps may use IDisposable or the synchronous disposal pattern. Async cleanup belongs inside the returned operation, not the Step instance.
+It does not provide:
 
-`[StepPolicy(RetryCount = 2, TimeoutMilliseconds = 500)]` is read at generation time and controls the generated Step method. Defaults are zero retries and infinite timeout (`-1`). Retry reconstructs the Step from the same arguments; it does not repeat argument evaluation, dependency resolution or upstream work. Cancellation is not retried.
+- persisted or distributed workflows;
+- runtime graph construction or mutation;
+- streaming throughput, buffering, or backpressure;
+- a trigger queue, implicit locking, or framework-owned StateMachine concurrency;
+- automatic compensation when an entry callback fails after state commit.
 
-Timeout is cooperative: the executor cancels the attempt and waits for it to finish before returning or retrying. Synchronous work must observe its token to stop early. Execution cancellation wins over timeout. Parallel Steps observe the linked execution token, which is canceled by either the caller or a terminal Step failure. Unconfigured policies emit no retry loop or timeout source. Direct business Step calls perform one raw attempt; generated Step methods apply the declared policies.
+## Diagnostics
 
-## Compatibility
+Pipeline diagnostics use the `TTP` prefix. They reject invalid graph shapes, type/nullability mismatches, unsupported step contracts, policy errors, dynamic declarations, and generated-name collisions. `TTP014`–`TTP016` also flag declaration APIs used as runtime work or direct step calls that bypass declared policies.
 
-Consumers must recompile when updating the bundled generator. Older prototypes used generic Pipeline/builders, captured configuration and runtime graph APIs; the supported API is the named partial class shown above. Legacy Configure(Builder, ...) remains available for constructor-time inputs.
+StateMachine diagnostics use `TTSM001` for invalid declarations or generated-member collisions and `TTSM002` for direct `State` assignment that would bypass generated lifecycle behavior.
 
-## Diagnostics and development
-
-| ID | Severity | Meaning / action |
-| --- | --- | --- |
-| TTP001 | Error | Match the upstream result type and nullability to the constructor parameter |
-| TTP004 | Error | Use a supported, constructible top-level Step |
-| TTP008 | Error | Use supported by-value constructor parameters |
-| TTP009 | Error | Keep the graph statically visible; the message identifies the invalid declaration or collision |
-| TTP012 | Error | Declare Step types internal |
-| TTP013 | Error | Correct the Step interface, lifecycle or retry/timeout policy |
-| TTP014 | Warning | Move Builder factory calls into Configuration; they do not execute runtime work |
-| TTP015 | Warning | Call a generated Execute method instead of calling Configuration |
-| TTP016 | Info | A direct Step execution call bypasses its declared Retry/Timeout policy |
-
-StateMachine diagnostics use the same build-time enforcement model:
-
-| ID | Severity | Meaning / action |
-| --- | --- | --- |
-| TTSM001 | Error | Correct an invalid state-machine declaration or a member that collides with generated/base API |
-| TTSM002 | Error | Change state through a generated Trigger instead of assigning `State` directly |
-
-An unassigned Step declaration is valid: `builder.Write(value);` still registers work. Direct Step calls are also valid when one raw attempt is intentional. Adjust diagnostic severity using standard .editorconfig settings:
+Diagnostic severity can be configured through standard `.editorconfig` settings:
 
 ```ini
 [*.cs]
 dotnet_diagnostic.TTP016.severity = none
 ```
 
+## Development
+
+### Prerequisites
+
+- .NET 10 SDK
+- Git with submodule support
+
+Clone with submodules, then run the repository's TedToolkit build pipeline:
+
 ```shell
-dotnet build TedToolkit.Orchestration.slnx --configuration Release
-dotnet run --project tests/TedToolkit.Orchestration.Pipeline.Tests --configuration Release
-dotnet run --project playground/TedToolkit.Orchestration.Pipeline.Playground --configuration Release
-dotnet run --project playground/TedToolkit.Orchestration.StateMachine.Playground --configuration Release
-dotnet pack src/TedToolkit.Orchestration.Pipeline --configuration Release --output artifacts/packages
+git clone --recurse-submodules https://github.com/TedToolkit/TedToolkit.Orchestration.git
+cd TedToolkit.Orchestration
+dotnet run --project Build/Build.csproj --configuration Release
 ```
 
-Direct project-reference consumers also reference the analyzer and import its AnalyzerDependencies.props; the Playground is a working example. Package consumers receive the analyzer and its dependencies automatically. Source composition uses TedToolkit.RoslynHelper 2026.9.4.
+Focused commands:
 
-For contributors, the analyzer separates discovery and configuration validation (PipelineExecutorGenerator), shared semantic rules (PipelineSymbols/StepSymbols), graph reading and expression mirroring (GraphReader/ExpressionMirror), Step construction and policy emission (StepExecutionEmitter), and execution order (ExecutionEmitter). PipelineAnalyzer owns usage diagnostics.
+```shell
+dotnet run --project tests/TedToolkit.Orchestration.Pipeline.Tests --configuration Release
+dotnet run --project tests/TedToolkit.Orchestration.StateMachine.Tests --configuration Release
+dotnet run --project playground/TedToolkit.Orchestration.Pipeline.Playground --configuration Release
+dotnet run --project playground/TedToolkit.Orchestration.StateMachine.Playground --configuration Release
+```
 
-Read the [product intent](docs/product/README.md), [design principles](docs/principles/README.md), [Pipeline architecture](docs/architecture/pipeline-system.md), [named executor decision](docs/architecture/named-executors.md), and [benchmarks](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/README.md). Historical benchmark snapshots describe their recorded APIs and must not be presented as current measurements.
+Benchmark correctness checks run the adapters without timing them:
 
-Licensed under LGPL-3.0; see [COPYING.LESSER](COPYING.LESSER) and [COPYING](COPYING).
+```shell
+dotnet run --project benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks --configuration Release -- --verify
+dotnet run --project benchmarks/TedToolkit.Orchestration.StateMachine.Benchmarks --configuration Release -- --verify
+```
+
+Read the benchmark-specific READMEs before collecting measurements:
+
+- [Pipeline benchmarks](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/README.md)
+- [StateMachine benchmarks](benchmarks/TedToolkit.Orchestration.StateMachine.Benchmarks/README.md)
+
+## Repository map
+
+| Area | Responsibility |
+| --- | --- |
+| `src/TedToolkit.Orchestration.Pipeline*` | Pipeline runtime, analyzer, and source generator |
+| `src/TedToolkit.Orchestration.StateMachine*` | StateMachine runtime, analyzer, and source generator |
+| `tests/` | Focused behavioral, generation, diagnostic, lifecycle, and packaging tests |
+| `playground/` | Runnable consumer examples and trimming verification |
+| `benchmarks/` | Correctness-checked adapters, microbenchmarks, and recorded interpretations |
+| `docs/product/` | Durable product purpose and boundaries |
+| `docs/principles/` | Recurring engineering defaults |
+| `docs/architecture/` | Current compile-time and runtime semantics |
+| `Build/` | Repository configuration for the shared TedToolkit build pipeline |
+
+## License
+
+Licensed under LGPL-3.0-only. See [COPYING.LESSER](COPYING.LESSER) and [COPYING](COPYING).
