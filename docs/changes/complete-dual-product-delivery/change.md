@@ -3,12 +3,12 @@
 <!-- change-format: 3 -->
 <!-- workflow-profile: controlled -->
 <!-- change-kind: behavior-change -->
-<!-- change-status: in-progress -->
+<!-- change-status: completed -->
 <!-- delivery-shape: single -->
 
 - Priority: P0
 <!-- approval-source: user-approved-and-directed-immediate-completion-in-codex-task-2026-09-06 -->
-<!-- candidate-binding: none -->
+<!-- candidate-binding: commit:d967f8aaa9fd7b8db96beab18742bd99f9a2284c -->
 
 <!-- section: goal-rationale -->
 ## Goal and rationale
