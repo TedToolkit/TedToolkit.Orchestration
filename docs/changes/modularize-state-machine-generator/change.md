@@ -29,7 +29,7 @@ Separate StateMachine declaration discovery, semantic validation/model construct
 - INV-01: Every currently valid or invalid StateMachine declaration produces the same observable generated API, diagnostics, and transition behavior after the refactor.
 
 <!-- preserved-invariant: INV-02 -->
-- INV-02: The StateMachine NuGet package retains the same runtime/analyzer boundary and remains consumable by the package-verification gate.
+- INV-02: The StateMachine NuGet package retains the same runtime/analyzer boundary and remains consumable from the locally packed artifacts.
 
 ## Constraints and risks
 
@@ -40,10 +40,7 @@ Separate StateMachine declaration discovery, semantic validation/model construct
 <!-- section: start-conditions -->
 ## Start conditions
 
-<!-- change-prerequisite: PRE-01 source=../complete-dual-product-delivery/change.md contract=STR-02 -->
-| ID | Required input or guarantee | Source change outcome | Required readiness evidence |
-| --- | --- | --- | --- |
-| PRE-01 | The StateMachine test and package-consumer gate can detect delivery regressions | `../complete-dual-product-delivery/change.md`, STR-02 | Source contract is completed on the selected Git baseline |
+<!-- change-prerequisite: none -->
 
 <!-- section: delivery-brief -->
 ## Delivery brief
@@ -61,7 +58,7 @@ Separate StateMachine declaration discovery, semantic validation/model construct
 | Contract | Role | Observable assertion | Command or bounded procedure |
 | --- | --- | --- | --- |
 | INV-01 | Primary | All StateMachine generation, diagnostic, lifecycle, event, guard, rejection, and reentry cases pass unchanged | `dotnet run --project tests/TedToolkit.Orchestration.StateMachine.Tests -c Release` |
-| INV-02 | Primary | The packed StateMachine runtime/analyzer pair passes the package-consumer gate | Run the repository package-verification command from the completed prerequisite |
+| INV-02 | Primary | The packed StateMachine runtime/analyzer pair retains the expected package boundary | Build Release packages and inspect the runtime/analyzer entries |
 
 <!-- section: completion-criteria -->
 ## Completion

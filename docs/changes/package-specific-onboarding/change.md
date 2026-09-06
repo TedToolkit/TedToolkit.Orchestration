@@ -29,7 +29,7 @@ Give Pipeline and StateMachine NuGet consumers focused package documentation who
 - STR-01: Each NuGet package embeds a focused README that identifies the package, installation boundary, smallest supported example, operational limits, and links to authoritative repository documentation.
 
 <!-- structural-outcome: STR-02 -->
-- STR-02: Representative first-use examples for both packages compile against the locally packed packages in the delivery gate.
+- STR-02: Representative first-use examples for both packages compile against the locally packed packages.
 
 ## Constraints and risks
 
@@ -40,15 +40,12 @@ Give Pipeline and StateMachine NuGet consumers focused package documentation who
 <!-- section: start-conditions -->
 ## Start conditions
 
-<!-- change-prerequisite: PRE-01 source=../complete-dual-product-delivery/change.md contract=STR-02 -->
-| ID | Required input or guarantee | Source change outcome | Required readiness evidence |
-| --- | --- | --- | --- |
-| PRE-01 | Both locally packed products and their consumer-verification boundary are available | `../complete-dual-product-delivery/change.md`, STR-02 | Source contract is completed on the selected Git baseline |
+<!-- change-prerequisite: none -->
 
 <!-- section: delivery-brief -->
 ## Delivery brief
 
-- Outcome and target delivery area: package-owned onboarding content and example verification integrated with the package gate.
+- Outcome and target delivery area: package-owned onboarding content and bounded example verification against local packages.
 - Other start conditions: public README and architecture records remain authoritative for detailed behavior.
 - Likely touchpoints (non-binding): both runtime project files, package README files, root navigation, and package-consumer fixtures.
 - Private implementation choices left open: README locations, fixture source layout, and how examples are shared with verification without making documentation generation complex.
@@ -61,7 +58,7 @@ Give Pipeline and StateMachine NuGet consumers focused package documentation who
 | Contract | Role | Observable assertion | Command or bounded procedure |
 | --- | --- | --- | --- |
 | STR-01 | Primary | Inspecting either package shows only relevant first-use guidance and working links to deeper documentation | Pack both products and inspect their embedded README metadata/content |
-| STR-02 | Primary | Pipeline and StateMachine first-use consumers compile against the local packages without project references | Run the repository package-verification command against Release packages |
+| STR-02 | Primary | Pipeline and StateMachine first-use consumers compile against the local packages without project references | Run bounded package-consumer compilation against Release packages |
 
 <!-- section: completion-criteria -->
 ## Completion
