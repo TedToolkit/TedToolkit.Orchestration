@@ -7,6 +7,6 @@ temp/
 *.g.cs
 output/
 artifacts/
-build/TedToolkit.Orchestration.Build/appsettings.json
+Build/appsettings.json
 BenchmarkDotNet.Artifacts/
 benchmarks/**/results/

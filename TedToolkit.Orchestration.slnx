@@ -15,8 +15,8 @@
   <Folder Name="/.github/workflows/">
     <File Path=".github/workflows/build.yml" />
   </Folder>
-  <Folder Name="/build/">
-    <Project Path="build/TedToolkit.Orchestration.Build/TedToolkit.Orchestration.Build.csproj">
+  <Folder Name="/Build/">
+    <Project Path="Build/Build.csproj">
       <Build Project="false" />
     </Project>
   </Folder>
@@ -35,7 +35,6 @@
     <Project Path="src/TedToolkit.Orchestration.StateMachine/TedToolkit.Orchestration.StateMachine.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/TedToolkit.Orchestration.Build.Tests/TedToolkit.Orchestration.Build.Tests.csproj" />
     <Project Path="tests/TedToolkit.Orchestration.Pipeline.Tests/TedToolkit.Orchestration.Pipeline.Tests.csproj" />
     <Project Path="tests/TedToolkit.Orchestration.StateMachine.Tests/TedToolkit.Orchestration.StateMachine.Tests.csproj" />
   </Folder>
