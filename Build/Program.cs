@@ -22,8 +22,9 @@ var pipeline = new TedPipeline(
         TestFiles =
         [
             Projects.TedToolkit_Orchestration_Pipeline_Tests,
+            Projects.TedToolkit_Orchestration_StateMachine_Tests,
         ],
     },
-    new FileInfo(Path.Combine(Projects.TedToolkit_Orchestration_Build.Directory!.FullName, "appsettings.json")));
+    new FileInfo(Path.Combine(Projects.Build.Directory!.FullName, "appsettings.json")));
 
 await pipeline.ExecuteAsync().ConfigureAwait(false);

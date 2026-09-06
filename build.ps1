@@ -1,4 +1,4 @@
-$project = Join-Path $PSScriptRoot 'build\TedToolkit.Orchestration.Build\TedToolkit.Orchestration.Build.csproj'
+$project = Join-Path $PSScriptRoot 'Build\Build.csproj'
 
 dotnet run --project $project --configuration Release
 exit $LASTEXITCODE

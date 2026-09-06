@@ -15,8 +15,8 @@
   <Folder Name="/.github/workflows/">
     <File Path=".github/workflows/build.yml" />
   </Folder>
-  <Folder Name="/build/">
-    <Project Path="build/TedToolkit.Orchestration.Build/TedToolkit.Orchestration.Build.csproj">
+  <Folder Name="/Build/">
+    <Project Path="Build/Build.csproj">
       <Build Project="false" />
     </Project>
   </Folder>
