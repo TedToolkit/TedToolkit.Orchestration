@@ -3,10 +3,10 @@
 <!-- change-format: 3 -->
 <!-- workflow-profile: controlled -->
 <!-- change-kind: behavior-change -->
-<!-- change-status: in-progress -->
+<!-- change-status: completed -->
 <!-- delivery-shape: single -->
 <!-- approval-source: user-directed-complete-removal-of-repository-delivery-system-in-codex-task-2026-09-06 -->
-<!-- candidate-binding: none -->
+<!-- candidate-binding: commit:7e0465ae01ad073dbb4f31004a6a13655311f237 -->
 
 <!-- section: goal-rationale -->
 ## Goal and rationale
