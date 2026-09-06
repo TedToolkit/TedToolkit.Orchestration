@@ -7,7 +7,10 @@
 
 using Sourcy.DotNet;
 
+using ModularPipelines.Extensions;
+
 using TedToolkit.ModularPipelines;
+using TedToolkit.Orchestration.Build;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
@@ -21,9 +24,15 @@ var pipeline = new TedPipeline(
         Solution = Solutions.TedToolkit_Orchestration,
         TestFiles =
         [
+            new FileInfo(Path.Combine(
+                Solutions.TedToolkit_Orchestration.Directory!.FullName,
+                "tests",
+                "TedToolkit.Orchestration.Build.Tests",
+                "TedToolkit.Orchestration.Build.Tests.csproj")),
             Projects.TedToolkit_Orchestration_Pipeline_Tests,
+            Projects.TedToolkit_Orchestration_StateMachine_Tests,
         ],
     },
     new FileInfo(Path.Combine(Projects.TedToolkit_Orchestration_Build.Directory!.FullName, "appsettings.json")));
 
-await pipeline.ExecuteAsync().ConfigureAwait(false);
+await pipeline.ExecuteAsync(builder => builder.AddModule<RepositoryDeliveryGateModule>()).ConfigureAwait(false);

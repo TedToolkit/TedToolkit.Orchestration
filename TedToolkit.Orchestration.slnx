@@ -35,6 +35,7 @@
     <Project Path="src/TedToolkit.Orchestration.StateMachine/TedToolkit.Orchestration.StateMachine.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/TedToolkit.Orchestration.Build.Tests/TedToolkit.Orchestration.Build.Tests.csproj" />
     <Project Path="tests/TedToolkit.Orchestration.Pipeline.Tests/TedToolkit.Orchestration.Pipeline.Tests.csproj" />
     <Project Path="tests/TedToolkit.Orchestration.StateMachine.Tests/TedToolkit.Orchestration.StateMachine.Tests.csproj" />
   </Folder>

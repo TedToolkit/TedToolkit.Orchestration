@@ -1,14 +1,15 @@
+name: Build and deliver
+
 on:
   push:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -16,15 +17,74 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Build solution
-        run: dotnet build TedToolkit.Orchestration.slnx --configuration Release
-      - name: Build automation project
-        run: dotnet build build/TedToolkit.Orchestration.Build/TedToolkit.Orchestration.Build.csproj --configuration Release
-      - name: Test Pipeline
-        run: dotnet run --project tests/TedToolkit.Orchestration.Pipeline.Tests --configuration Release --no-build
-      - name: Pack library
-        run: dotnet pack src/TedToolkit.Orchestration.Pipeline/TedToolkit.Orchestration.Pipeline.csproj --configuration Release --no-build --output artifacts/packages
+      - name: Run TedToolkit validation
+        env:
+          CI: "false"
+        run: dotnet run --project build/TedToolkit.Orchestration.Build/TedToolkit.Orchestration.Build.csproj --configuration Release
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: packages
-          path: artifacts/packages/*.nupkg
+          name: validation-output
+          path: output/
+          retention-days: 2
+          if-no-files-found: ignore
+
+  deliver-development:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: delivery-development
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Maintain release pull request through TedToolkit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: dotnet run --project build/TedToolkit.Orchestration.Build/TedToolkit.Orchestration.Build.csproj --configuration Release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: development-delivery-output
+          path: output/
+          retention-days: 2
+          if-no-files-found: ignore
+
+  deliver-main:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: delivery-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish packages and release through TedToolkit
+        env:
+          NuGet__ApiKey: ${{ secrets.NUGET__APIKEY }}
+          NuGet__Url: ${{ vars.NUGET__URL }}
+          NuGet__Source: ${{ vars.NUGET__SOURCE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: dotnet run --project build/TedToolkit.Orchestration.Build/TedToolkit.Orchestration.Build.csproj --configuration Release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-delivery-output
+          path: output/
+          retention-days: 2
+          if-no-files-found: ignore

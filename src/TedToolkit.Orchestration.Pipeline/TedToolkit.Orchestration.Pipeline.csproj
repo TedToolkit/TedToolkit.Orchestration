@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsTrimmable>true</IsTrimmable>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <Description>Pipeline orchestration library.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>LGPL-3.0-only</PackageLicenseExpression>
