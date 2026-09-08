@@ -9,13 +9,17 @@ public partial class ExecutorGeneratorTests
     public async Task ParallelEntrypointsDirectlyCallStepsWithoutBranchesOrNestedMethods()
     {
         var generated = await Generate(NamedSteps + ConcurrentSteps + """
-            public sealed partial class Example : Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(
+                Func<CancellationToken, Task<int>> rootWork,
+                Func<int, CancellationToken, Task<int>> leftWork,
+                Func<int, CancellationToken, Task<int>> rightWork)
             {
-                protected override void Configuration(Builder p)
+                private void Configuration(StepGraph p)
                 {
-                    var root = p.Start();
-                    var left = p.After(root);
-                    var right = p.After(root);
+                    var root = p.Start(rootWork);
+                    var left = p.After(root, leftWork);
+                    var right = p.After(root, rightWork);
                     p.Add(left, right);
                 }
             }
@@ -25,10 +29,10 @@ public partial class ExecutorGeneratorTests
         var root = (MethodDeclarationSyntax)owner.GetMembers("RunRoot0Async").OfType<IMethodSymbol>().Single()
             .DeclaringSyntaxReferences.Single().GetSyntax();
         await Assert.That(root.DescendantNodes().OfType<InvocationExpressionSyntax>()
-            .Count(call => call.Expression.ToString() == "executionToken.ThrowIfCancellationRequested")).IsEqualTo(2);
+            .Count(call => call.Expression.ToString() == "executionToken.ThrowIfCancellationRequested")).IsEqualTo(3);
         foreach (var name in new[] { "ExecuteAsync", "ExecuteWithoutResultsAsync" })
         {
-            var syntax = (MethodDeclarationSyntax)owner.GetMembers(name).OfType<IMethodSymbol>().Single()
+            var syntax = (MethodDeclarationSyntax)owner.GetMembers(name + "Core").OfType<IMethodSymbol>().Single()
                 .DeclaringSyntaxReferences.Single().GetSyntax();
             await Assert.That(syntax.DescendantNodes().Any(node => node is TryStatementSyntax or LocalFunctionStatementSyntax)).IsFalse();
             var waits = syntax.DescendantNodes().OfType<InvocationExpressionSyntax>()
@@ -56,33 +60,33 @@ public partial class ExecutorGeneratorTests
                 public int Constructed;
                 public int Downstream;
             }
-            internal readonly ref struct Fail : IStep<int>
+            internal readonly ref partial struct Fail : IStep<int>
             {
                 private readonly State state;
                 public Fail(State state) { this.state = state; state.Constructed++; }
                 public int Execute(CancellationToken token) => throw state.Expected;
             }
-            internal readonly ref struct Touch(int value, State state) : IStep
+            internal readonly ref partial struct Touch(int value, State state) : IStep
             {
                 public void Execute(CancellationToken token) => state.Downstream++;
             }
-            public sealed partial class Example : Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(State state, Func<CancellationToken, Task<int>> slowWork)
             {
                 private static State Read(State state) => state.ArgumentFailure ? throw state.Expected : state;
-                private void Configure(Builder p, State state)
+                private void Configuration(StepGraph p)
                 {
-                    var slow = p.Start();
+                    var slow = p.Start(slowWork);
                     var failed = p.Fail(Read(state));
                     p.Touch(failed, state);
                 }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
                 var state = new State { ArgumentFailure = ARGUMENT };
                 var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var cleaned = 0;
-                Task execution = new Example(services, state).METHOD(slowWork: async token =>
+                Task execution = new Example.Pipeline().METHOD(state, slowWork: async token =>
                 {
                     using var registration = token.Register(() => { canceled.TrySetResult(); throw new Exception("callback"); });
                     try { await release.Task; return 1; }
@@ -108,20 +112,25 @@ public partial class ExecutorGeneratorTests
     {
         var result = await Run(ConcurrentSteps + """
             public sealed class State { public int Attempts; }
-            [StepPolicy(RetryCount = 1)]
-            internal readonly ref struct Retry(State state) : IAsyncStep<int>
+            internal readonly ref partial struct Retry(State state) : IAsyncStep<int>
             {
                 public Task<int> ExecuteAsync(CancellationToken token) =>
                     ++state.Attempts == 1 ? Task.FromException<int>(new Exception("retry")) : Task.FromResult(42);
             }
-            public sealed partial class Example : Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(
+                State state,
+                Func<CancellationToken, Task<int>> otherWork)
             {
-                private void Configure(Builder p, State state) { var retry = p.Retry(state); var other = p.Start(); }
+                private void Configuration(StepGraph p)
+                {
+                    var retry = p.Retry(state).WithRetry(1);
+                    var other = p.Start(otherWork);
+                }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
                 var state = new State();
-                var result = await new Example(services, state).ExecuteAsync(otherWork: async token =>
+                var result = await new Example.Pipeline().ExecuteAsync(state, otherWork: async token =>
                 {
                     await Task.Yield();
                     token.ThrowIfCancellationRequested();

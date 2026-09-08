@@ -8,11 +8,11 @@ public partial class ExecutorGeneratorTests
     {
         var result = await Run("""
             public sealed class State { public string Order = ""; public int Last; public int Disposed; }
-            internal readonly ref struct Seed(int value, State state) : IStep<int>
+            internal readonly ref partial struct Seed(int value, State state) : IStep<int>
             {
                 public int Execute(CancellationToken token) { state.Order += "S"; return value + 1; }
             }
-            internal readonly ref struct Wait(int value, Task gate, State state) : IAsyncStep<int>
+            internal readonly ref partial struct Wait(int value, Task gate, State state) : IAsyncStep<int>
             {
                 public Task<int> ExecuteAsync(CancellationToken token) => Run(value, gate, state);
                 private static async Task<int> Run(int value, Task gate, State state)
@@ -20,32 +20,32 @@ public partial class ExecutorGeneratorTests
                     state.Order += "A"; await gate; state.Order += "a"; return value * 2;
                 }
             }
-            internal readonly ref struct Finish(int value, State state) : IStep<int>, IDisposable
+            internal readonly ref partial struct Finish(int value, State state) : IStep<int>, IDisposable
             {
                 public int Execute(CancellationToken token) { state.Order += "F"; state.Last = value + 3; return state.Last; }
                 public void Dispose() { state.Order += "D"; state.Disposed++; }
             }
-            public sealed partial class Example : Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(int seedValue, Task waitGate, State state)
             {
-                private void Configure(Builder p, State state)
+                private void Configuration(StepGraph p)
                 {
-                    var seed = p.Seed(state: state);
-                    var wait = p.Wait(seed, state: state);
+                    var seed = p.Seed(seedValue, state);
+                    var wait = p.Wait(seed, waitGate, state);
                     var finish = p.Finish(wait, state);
                 }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
                 var state = new State();
                 var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                var pipeline = new Example(services, state);
-                Task pending = pipeline.METHOD(seedValue: 4, waitGate: gate.Task);
+                var pipeline = new Example.Pipeline();
+                Task pending = pipeline.METHOD(seedValue: 4, waitGate: gate.Task, state: state);
                 var before = state.Order;
                 var early = pending.IsCompleted;
                 gate.SetResult();
                 await pending;
                 var first = state.Last;
-                var second = await pipeline.ExecuteAsync(seedValue: 9, waitGate: Task.CompletedTask);
+                var second = await pipeline.ExecuteAsync(seedValue: 9, waitGate: Task.CompletedTask, state: state);
                 return $"{before}:{early}:{first}:{second.Finish}:{state.Disposed}:{state.Order}";
                 """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")));
         await Assert.That(result).IsEqualTo("SA:False:13:23:2:SAaFDSAaFD");
@@ -57,49 +57,53 @@ public partial class ExecutorGeneratorTests
     {
         var result = await Run("""
             public sealed class State { public int Roots; public int Joined; public int Stored; }
-            internal readonly ref struct Root(int value, State state) : IStep<int>
+            internal readonly ref partial struct Root(int value, State state) : IStep<int>
             {
                 public int Execute(CancellationToken token) { state.Roots++; return value + 1; }
             }
-            internal readonly ref struct Slow(int value, Task gate) : IAsyncStep<int>
+            internal readonly ref partial struct Slow(int value, Task gate) : IAsyncStep<int>
             {
                 public Task<int> ExecuteAsync(CancellationToken token) => Run(value, gate);
                 private static async Task<int> Run(int value, Task gate) { await gate; return value + 2; }
             }
-            internal readonly ref struct Fast(int value) : IStep<int>
+            internal readonly ref partial struct Fast(int value) : IStep<int>
             {
                 public int Execute(CancellationToken token) => value + 3;
             }
-            internal readonly ref struct Child(int value, TaskCompletionSource signal) : IAsyncStep<int>
+            internal readonly ref partial struct Child(int value, TaskCompletionSource signal) : IAsyncStep<int>
             {
                 public Task<int> ExecuteAsync(CancellationToken token) { signal.SetResult(); return Task.FromResult(value + 4); }
             }
-            internal readonly ref struct Join(int left, int right, State state) : IStep<int>
+            internal readonly ref partial struct Join(int left, int right, State state) : IStep<int>
             {
                 public int Execute(CancellationToken token) { state.Joined++; return left + right; }
             }
-            internal readonly ref struct Store(int value, State state) : IStep
+            internal readonly ref partial struct Store(int value, State state) : IStep
             {
                 public void Execute(CancellationToken token) => state.Stored = value;
             }
-            public sealed partial class Example : Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(
+                int rootValue,
+                Task slowGate,
+                TaskCompletionSource childSignal,
+                State state)
             {
-                private void Configure(Builder p, State state)
+                private void Configuration(StepGraph p)
                 {
-                    var root = p.Root(state: state);
-                    var slow = p.Slow(root);
+                    var root = p.Root(rootValue, state);
+                    var slow = p.Slow(root, slowGate);
                     var fast = p.Fast(root);
-                    var child = p.Child(fast);
+                    var child = p.Child(fast, childSignal);
                     var join = p.Join(slow, child, state);
                     p.Store(join, state);
                 }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
                 var state = new State();
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                Task pending = new Example(services, state).METHOD(rootValue: 10, slowGate: release.Task, childSignal: signal);
+                Task pending = new Example.Pipeline().METHOD(rootValue: 10, slowGate: release.Task, childSignal: signal, state: state);
                 bool premature;
                 try
                 {
@@ -117,18 +121,20 @@ public partial class ExecutorGeneratorTests
     public async Task ConcurrentFailuresPreserveAnOriginalExceptionAndDrainBothSteps()
     {
         var result = await Run(ConcurrentSteps + """
-            public sealed partial class Example : Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(
+                Func<CancellationToken, Task<int>> laterWork,
+                Func<CancellationToken, Task<int>> firstWork)
             {
-                protected override void Configuration(Builder p) { var later = p.Start(); var first = p.Start(); }
+                private void Configuration(StepGraph p) { var later = p.Start(laterWork); var first = p.Start(firstWork); }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
                 var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var finished = 0;
                 var firstFailure = new InvalidOperationException("first observed");
                 var laterFailure = new InvalidOperationException("later observed");
-                var pending = new Example(services).ExecuteAsync(
+                var pending = new Example.Pipeline().ExecuteAsync(
                     laterWork: async token =>
                     {
                         using var registration = token.Register(() => canceled.TrySetResult());

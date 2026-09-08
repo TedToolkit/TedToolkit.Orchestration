@@ -5,57 +5,45 @@ namespace TedToolkit.Orchestration.Pipeline.Tests;
 public partial class ExecutorGeneratorTests
 {
     [Test]
-    [Arguments("new Pipeline.Builder().Work()", "TTP014", DiagnosticSeverity.Warning)]
-    [Arguments("WorkExtensions.Work(new Pipeline.Builder())", "TTP014", DiagnosticSeverity.Warning)]
-    [Arguments("new Work().Execute(default)", "TTP016", DiagnosticSeverity.Info)]
-    public async Task RuntimeMisuseReportsAnActionableDiagnostic(string call, string id, DiagnosticSeverity severity)
+    [Arguments("new StepGraph().Work()", "TTP014", DiagnosticSeverity.Warning)]
+    [Arguments("WorkExtensions.Work(new StepGraph())", "TTP014", DiagnosticSeverity.Warning)]
+    [Arguments("default(StepBuilder<int>).WithRetry(1)", "TTP017", DiagnosticSeverity.Warning)]
+    public async Task ConfigurationOnlyApisReportActionableDiagnostics(
+        string call, string id, DiagnosticSeverity severity)
     {
         var generated = await Generate("""
-            [StepPolicy(RetryCount = 1)]
-            internal readonly ref struct Work : IStep<int>
+            internal readonly ref partial struct Work : IStep<int>
             {
                 public int Execute(CancellationToken token) => 1;
+            }
+            [CompositeStep]
+            public readonly ref partial struct Example
+            {
+                private void Configuration(StepGraph graph) { var work = graph.Work(); }
             }
             public static class Consumer { public static void Run() { CALL; } }
             """.Replace("CALL", call));
         await NoErrors(generated);
         var diagnostic = generated.Diagnostics.Single(item => item.Id == id);
         await Assert.That(diagnostic.Severity).IsEqualTo(severity);
-        await Assert.That(diagnostic.Location.SourceTree!.GetText().ToString(diagnostic.Location.SourceSpan)).IsEqualTo(call);
     }
 
     [Test]
-    [Arguments("Configuration")]
-    [Arguments("Configure")]
-    public async Task CallingConfigurationWarnsInsteadOfSuggestingThatItRunsWork(string name)
+    public async Task DirectLeafExecutionRequiresGeneratedContextButDoesNotWarn()
     {
-        var declaration = name == "Configuration" ? "protected override void Configuration" : "private void Configure";
         var generated = await Generate("""
-            public sealed partial class Example : Pipeline
+            internal readonly ref partial struct Raw : IStep
             {
-                DECLARATION(Builder builder) { }
-                public void Run() => NAME(default);
+                public void Execute(CancellationToken token) { }
             }
-            """.Replace("DECLARATION", declaration).Replace("NAME", name));
-        await NoErrors(generated);
-        await Assert.That(generated.Diagnostics.Count(item => item.Id == "TTP015")).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task ValidDeclarationsAndRawStepsWithoutPoliciesDoNotWarn()
-    {
-        var generated = await Generate("""
-            [StepPolicy(RetryCount = 1)]
-            internal readonly ref struct Work : IStep<int> { public int Execute(CancellationToken token) => 1; }
-            internal readonly ref struct Raw : IStep { public void Execute(CancellationToken token) { } }
-            public sealed partial class Example : Pipeline
+            public static class Consumer
             {
-                protected override void Configuration(Builder builder) { builder.Work(); }
-                public void RawCall() => new Raw().Execute(default);
+                public static void Run() => new Raw { DisplayName = "Direct" }.Execute(default);
             }
             """);
         await NoErrors(generated);
-        await Assert.That(generated.Diagnostics.Any(item => item.Id is "TTP014" or "TTP015" or "TTP016")).IsFalse();
+        await Assert.That(generated.Diagnostics.Any(item =>
+            item.Id is "TTP014" or "TTP015" or "TTP017")).IsFalse();
     }
 
     [Test]
@@ -75,18 +63,24 @@ public partial class ExecutorGeneratorTests
     }
 
     [Test]
-    public async Task BuilderAliasesUseSemanticIdentityAndStillGenerateExecution()
+    public async Task StepGraphAliasesUseSemanticIdentityAndStillGenerateExecution()
     {
         var generated = await Generate("""
-            using GraphBuilder = TedToolkit.Orchestration.Pipeline.Pipeline.Builder;
-            internal readonly ref struct Work : IStep<int> { public int Execute(CancellationToken token) => 1; }
-            public sealed partial class Example : Pipeline
+            using GraphBuilder = TedToolkit.Orchestration.Pipeline.StepGraph;
+            internal readonly ref partial struct Work : IStep<int>
             {
-                protected override void Configuration(GraphBuilder builder) { builder.Work(); }
+                public int Execute(CancellationToken token) => 1;
+            }
+            [CompositeStep]
+            public readonly ref partial struct Example
+            {
+                private void Configuration(GraphBuilder builder) { var work = builder.Work(); }
             }
             """);
         await NoErrors(generated);
-        await Assert.That(generated.Compilation.GetTypeByMetadataName("Example")!.GetMembers("Execute").Length).IsEqualTo(1);
-        await Assert.That(generated.Diagnostics.Any(item => item.Id is "TTP014" or "TTP015" or "TTP016")).IsFalse();
+        await Assert.That(generated.Compilation.GetTypeByMetadataName("Example")!
+            .GetMembers("Execute").Length).IsEqualTo(1);
+        await Assert.That(generated.Diagnostics.Any(item =>
+            item.Id is "TTP014" or "TTP015" or "TTP017")).IsFalse();
     }
 }

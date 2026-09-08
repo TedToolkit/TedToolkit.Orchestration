@@ -2,7 +2,7 @@
 
 This project measures the request-execution cost of [TedToolkit.Orchestration.Pipeline](../../README.md) against equivalent handwritten tasks and pinned neighboring libraries. It exists to test the compile-time design with reproducible evidence, not to produce a universal framework ranking.
 
-The latest complete snapshot is [the 2026-09-05 comparison after retry-exhaustion cleanup](retry-exhaustion-benchmark.md). It records the machine, runtime, package versions, confidence intervals, allocations, adapter verification, and interpretation limits.
+The latest focused and complete maintained-comparison snapshot is [the 2026-09-08 Composite Step study](composite-step-results.md). The preceding complete cross-library snapshot is [the 2026-09-05 comparison after retry-exhaustion cleanup](retry-exhaustion-benchmark.md).
 
 ## What is compared
 
@@ -26,23 +26,23 @@ Each operation suspends with `Task.Yield`.
 
 | Implementation | Chain mean / allocation | Diamond mean / allocation |
 | --- | ---: | ---: |
-| Handwritten tasks | 3.44 μs / 560 B | 5.13 μs / 720 B |
-| TedPipeline | 3.36 μs / 688 B | 4.33 μs / 1,697 B |
-| WorkflowFramework | 3.47 μs / 1,032 B | 8.05 μs / 4,429 B |
-| PipelineNet | 10.46 μs / 2,878 B | Not represented |
-| TPL Dataflow | 13.65 μs / 2,173 B | 14.45 μs / 2,318 B |
+| Handwritten tasks | 2.850 μs / 560 B | 2.810 μs / 720 B |
+| TedPipeline | 2.895 μs / 680 B | 4.362 μs / 1,682 B |
+| WorkflowFramework | 3.294 μs / 1,032 B | 8.006 μs / 4,433 B |
+| PipelineNet | 5.764 μs / 2,847 B | Not represented |
+| TPL Dataflow | 13.109 μs / 2,161 B | 11.800 μs / 2,314 B |
 
-The chain intervals overlap, so the small timing differences among handwritten tasks, TedPipeline, and WorkflowFramework are inconclusive. The TedPipeline diamond mean is lower than handwritten in this run, but the handwritten interval is wide and overlaps; the result does not prove a general timing advantage.
+The handwritten and TedPipeline chain intervals overlap, so their small timing difference is inconclusive. The diamond workload exposes additional generated coordination: TedPipeline is slower and allocates 962 B more than the lower-abstraction handwritten baseline in this run.
 
 ### Already-completed tasks
 
 | Implementation | Chain mean / allocation | Diamond mean / allocation |
 | --- | ---: | ---: |
-| Handwritten tasks | 47.77 ns / 360 B | 128.41 ns / 520 B |
-| TedPipeline | 79.48 ns / 440 B | 257.24 ns / 848 B |
-| WorkflowFramework | 113.13 ns / 648 B | 1,387.53 ns / 2,408 B |
-| PipelineNet | 423.27 ns / 808 B | Not represented |
-| TPL Dataflow | 9,683.76 ns / 2,033 B | 14,567.68 ns / 2,184 B |
+| Handwritten tasks | 35.76 ns / 360 B | 105.5 ns / 520 B |
+| TedPipeline | 60.32 ns / 440 B | 258.3 ns / 848 B |
+| WorkflowFramework | 92.71 ns / 648 B | 878.8 ns / 2,408 B |
+| PipelineNet | 374.64 ns / 808 B | Not represented |
+| TPL Dataflow | 7,957.03 ns / 2,032 B | 9,173.3 ns / 2,185 B |
 
 Completed tasks are still asynchronous step contracts; they are not the same as synchronous steps.
 
@@ -50,11 +50,23 @@ Completed tasks are still asynchronous step contracts; they are not the same as 
 
 | Workload | Handwritten | Generated |
 | --- | ---: | ---: |
-| Four synchronous additions | 2.54 ns / 0 B | 11.95 ns / 0 B |
-| Mixed steps, completed tasks | 46.30 ns / 288 B | 63.79 ns / 288 B |
-| Mixed steps, yielding tasks | 3.42 μs / 536 B | 3.51 μs / 536 B |
+| Four synchronous additions | 2.659 ns / 0 B | 11.645 ns / 0 B |
+| Mixed steps, completed tasks | 35.97 ns / 288 B | 45.56 ns / 288 B |
+| Mixed steps, yielding tasks | 2.980 μs / 536 B | 2.857 μs / 544 B |
 
 This is the clearest trade-off: handwritten synchronous code remains cheaper, while generated completion-only execution avoids allocation and the suspended mixed path is close to handwritten in this workload.
+
+### Composite nesting
+
+The focused study compares an equivalent flat graph with one nested Composite boundary. Pipeline facade construction occurs in setup.
+
+| Path | Flat mean / allocation | Nested mean / allocation |
+| --- | ---: | ---: |
+| Synchronous | 5.235 ns / 0 B | 6.264 ns / 0 B |
+| Completed tasks | 47.79 ns / 288 B | 55.80 ns / 360 B |
+| Yielding tasks | 1.793 μs / 440 B | 1.863 μs / 560 B |
+
+The synchronous and yielding flat/nested 99.9% confidence intervals overlap. The completed path adds 8.01 ns and 72 B, within its approved absolute limits of 16 ns and 512 B. The yielding nested path adds 120 B, and the synchronous path remains allocation-free. The synchronous nested distribution was bimodal and the asynchronous run also reported multimodality, so the intervals—not isolated means—are the acceptance evidence.
 
 ## Workloads
 
@@ -64,6 +76,7 @@ This is the clearest trade-off: handwritten synchronous code remains cheaper, wh
 | Diamond | Shared source, two independent operations, then a join | Handwritten, TedPipeline, WorkflowFramework, TPL Dataflow |
 | ValueSync | Four synchronous additions and a result sink | Handwritten and generated completion-only execution |
 | ValueAsync | Four asynchronous additions and a synchronous sink | Handwritten and generated completion-only execution |
+| Composite | Equivalent two-node flat graph and one-boundary nested graph across sync, completed-task, and yielding paths | Direct, flat generated, and nested generated paths |
 | Construction | Native adapter/executor construction | TedPipeline, WorkflowFramework, PipelineNet |
 
 Inputs stay outside the small `Task<int>` result cache. Execution measurements exclude construction, DI setup, source generation, retries, finite timeouts, and failures unless a focused study explicitly says otherwise.
@@ -84,7 +97,9 @@ From the repository root with the .NET 10 SDK:
 
 ```shell
 dotnet run --project benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks --configuration Release -- --verify
-dotnet run --project benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks --configuration Release --no-build -- --filter '*ChainBenchmarks*' '*DiamondBenchmarks*' '*ValueSyncBenchmarks*' '*ValueAsyncBenchmarks*' --launchCount 2 --warmupCount 5 --iterationCount 15 --iterationTime 250 --artifacts artifacts/readability-library-comparison
+dotnet run --project benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks --configuration Release --no-build -- --filter '*CompositeSyncNestingBenchmarks*' --launchCount 2 --warmupCount 5 --iterationCount 15 --iterationTime 250 --artifacts artifacts/composite-step-review-fix-sync
+dotnet run --project benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks --configuration Release --no-build -- --filter '*CompositeNestingBenchmarks*' --launchCount 2 --warmupCount 5 --iterationCount 15 --iterationTime 250 --artifacts artifacts/composite-step-review-fix-async
+dotnet run --project benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks --configuration Release --no-build -- --filter '*ChainBenchmarks*' '*DiamondBenchmarks*' '*ValueSyncBenchmarks*' '*ValueAsyncBenchmarks*' --launchCount 2 --warmupCount 5 --iterationCount 15 --iterationTime 250 --artifacts artifacts/composite-step-review-fix-maintained
 ```
 
 BenchmarkDotNet executes timed cases in separate child processes. Stop other builds and CPU-heavy work before measuring. No processor affinity was imposed on the recorded run, so compare confidence intervals and distributions rather than isolated means.
@@ -101,7 +116,8 @@ BenchmarkDotNet executes timed cases in separate child processes. Stop other bui
 
 | Study | Purpose |
 | --- | --- |
-| [Latest comparison](retry-exhaustion-benchmark.md) | Current full tables and interpretation after retry-exhaustion cleanup |
+| [Composite Step nesting](composite-step-results.md) | Current flat-versus-nested sync, completed-task, and yielding evidence |
+| [Preceding comparison](retry-exhaustion-benchmark.md) | Earlier full tables and interpretation after retry-exhaustion cleanup |
 | [Preceding readability comparison](readability-library-comparison.md) | Earlier comparable library run |
 | [Completed-task access](completed-task-results.md) | `await` versus `GetAwaiter().GetResult()` after completion is known |
 | [Cancellation/task reuse optimization](cancellation-optimization.md) | Focused before/after optimization evidence |

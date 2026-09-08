@@ -46,21 +46,20 @@ public class VoidStepTests
             _execute = execute;
             var milliseconds = timeout is null ? -1 : checked((int)timeout.Value.TotalMilliseconds);
             _run = ExecutorGeneratorTests.Compile<Func<Func<CancellationToken, Task>, CancellationToken, Task>>($$"""
-                [StepPolicy(RetryCount = {{retries}}, TimeoutMilliseconds = {{milliseconds}})]
-                internal readonly ref struct Effect(Func<CancellationToken, Task> operation) : IAsyncStep
+                internal readonly ref partial struct Effect(Func<CancellationToken, Task> operation) : IAsyncStep
                 {
                     public Task ExecuteAsync(CancellationToken token) => operation(token);
                 }
-                public partial class EffectPipeline : global::TedToolkit.Orchestration.Pipeline.Pipeline
+                [CompositeStep]
+                public readonly ref partial struct EffectPipeline(Func<CancellationToken, Task> operation)
                 {
-                    private void Configure(Builder pipeline) { pipeline.Effect(); }
+                    private void Configuration(StepGraph pipeline) { pipeline.Effect(operation).WithRetry({{retries}}).WithTimeout({{milliseconds}}); }
                 }
                 public static class Scenario
                 {
-                    private sealed class Services : IServiceProvider { public object? GetService(Type type) => null; }
                     public static Task Run(Func<CancellationToken, Task> operation, CancellationToken token)
                     {
-                        return new EffectPipeline(new Services()).ExecuteWithoutResultsAsync(operation, token);
+                        return new EffectPipeline.Pipeline().ExecuteWithoutResultsAsync(operation, token);
                     }
                 }
                 """);

@@ -11,10 +11,8 @@ internal static class StepSymbols
     internal const string ServiceName = "TedToolkit.Orchestration.Pipeline.Attributes.FromServicesAttribute";
     internal const string ArgumentName = "TedToolkit.Orchestration.Pipeline.StepArgument`1";
     internal const string BuilderName = "TedToolkit.Orchestration.Pipeline.StepBuilder`1";
-
     internal const string VoidStepName = "TedToolkit.Orchestration.Pipeline.IStep";
     internal const string StepName = "TedToolkit.Orchestration.Pipeline.IStep`1";
-    internal const string PolicyName = "TedToolkit.Orchestration.Pipeline.Attributes.StepPolicyAttribute";
 
     internal static INamedTypeSymbol[] Contracts(ITypeSymbol type, Compilation compilation)
     {
@@ -30,24 +28,22 @@ internal static class StepSymbols
     internal static bool IsSynchronous(ITypeSymbol type, Compilation compilation) =>
         Contracts(type, compilation).Any(contract => contract.Name == "IStep");
 
-    internal static bool IsStep(ITypeSymbol type, Compilation compilation) =>
+    internal static bool IsLeafStep(ITypeSymbol type, Compilation compilation) =>
         type.TypeKind != TypeKind.Interface && Contracts(type, compilation).Length != 0;
 
-    internal static (int RetryCount, int TimeoutMilliseconds) Policy(ITypeSymbol type)
-    {
-        var attribute = type.GetAttributes().FirstOrDefault(item => item.AttributeClass?.ToDisplayString() == PolicyName);
-        var retries = 0;
-        var timeout = -1;
-        if (attribute is not null)
-            foreach (var argument in attribute.NamedArguments)
-                if (argument.Key == "RetryCount") retries = (int)argument.Value.Value!;
-                else if (argument.Key == "TimeoutMilliseconds") timeout = (int)argument.Value.Value!;
-        return (retries, timeout);
-    }
+    internal static bool IsStep(ITypeSymbol type, Compilation compilation) => IsLeafStep(type, compilation);
 
     internal static string? InvalidContract(INamedTypeSymbol type, Compilation compilation)
     {
         if (!type.IsRefLikeType || type.TypeKind != TypeKind.Struct) return "steps must be ref structs";
+        if (!type.IsReadOnly || type.DeclaredAccessibility != Accessibility.Internal ||
+            type.IsFileLocal || type.ContainingType is not null || type.Arity != 0 ||
+            !type.DeclaringSyntaxReferences.Any(reference =>
+                reference.GetSyntax() is Microsoft.CodeAnalysis.CSharp.Syntax.StructDeclarationSyntax declaration &&
+                declaration.Modifiers.Any(Microsoft.CodeAnalysis.CSharp.SyntaxKind.PartialKeyword)))
+            return "steps must be top-level, non-generic internal readonly ref partial structs";
+        if (StepContextEmitter.HasExplicitLayout(type))
+            return "steps cannot use explicit struct layout because generated context adds fields";
         var contracts = Contracts(type, compilation);
         if (contracts.Length != 1) return "implement exactly one synchronous or asynchronous step interface";
         var method = contracts[0].GetMembers().OfType<IMethodSymbol>().Single();
@@ -58,10 +54,33 @@ internal static class StepSymbols
             (contracts[0].Name != "IStep" && type.GetMembers("Dispose").Length != 0) ||
             (contracts[0].Name != "IStep" && type.AllInterfaces.Any(contract => contract.ToDisplayString() == "System.IDisposable")))
             return "asynchronous cleanup must belong to the returned operation, not the step instance";
-        var policy = Policy(type);
-        if (policy.RetryCount < 0 || policy.TimeoutMilliseconds < -1 || policy.TimeoutMilliseconds == 0)
-            return "RetryCount must be nonnegative; TimeoutMilliseconds must be -1 or positive";
+        if (type.GetMembers().Any(member =>
+            member is IPropertySymbol { IsRequired: true } or IFieldSymbol { IsRequired: true } &&
+            member.Locations.Any(location => location.SourceTree?.FilePath.EndsWith(
+                ".StepContext.g.cs", System.StringComparison.Ordinal) != true)))
+            return "user-authored required members are not supported";
+        var constructors = UsableConstructors(type, compilation);
+        if (constructors.Length != 1)
+            return "declare exactly one constructor accessible to generated execution";
+        if (constructors[0].Parameters.Any(parameter =>
+            parameter.RefKind != RefKind.None ||
+            parameter.Type.IsRefLikeType ||
+            parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer))
+            return "constructor parameters must be by-value and cannot be ref-like, pointer, or function-pointer types";
         return null;
+    }
+
+    internal static IMethodSymbol[] UsableConstructors(INamedTypeSymbol type, Compilation compilation)
+    {
+        var explicitConstructors = type.InstanceConstructors.Where(constructor =>
+            !constructor.IsImplicitlyDeclared &&
+            compilation.IsSymbolAccessibleWithin(constructor, compilation.Assembly)).ToArray();
+        return explicitConstructors.Length != 0
+            ? explicitConstructors
+            : type.InstanceConstructors.Where(constructor =>
+                constructor.IsImplicitlyDeclared &&
+                constructor.Parameters.Length == 0 &&
+                compilation.IsSymbolAccessibleWithin(constructor, compilation.Assembly)).ToArray();
     }
 
     internal static bool IsService(IParameterSymbol parameter) => ServiceAttribute(parameter) is not null;

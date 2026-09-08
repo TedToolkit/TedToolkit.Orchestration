@@ -4,7 +4,7 @@
 - Owner: library maintainers
 - Scope and system boundary: the StateMachine runtime package, bundled analyzer/source generator, generated consumer partial classes, consumer state enums, guards, and caller-owned machine instances
 - Applicable product intent: None; the state-machine product direction was approved directly by the owner in the originating Codex task
-- Governing principles: the compile-time, inspectability, pay-for-use, and reject-unsupported directions in `docs/principles/README.md`; that document remains formally scoped to Pipeline and is architectural precedent here
+- Governing principles: P8 in `docs/principles/README.md` directly governs both Pipeline and StateMachine; its other compile-time, inspectability, pay-for-use, and reject-unsupported directions remain architectural precedent here
 - Related ADRs: None
 - Approval source: the user approved the analyzer-first enum-state design, Attribute-marked lifecycle hooks, mixed synchronous, `Task`, and `ValueTask` guards and hooks, constructor-supplied initial state with an optional Attribute-declared default, fail-fast same-instance trigger reentry protection, caller-owned concurrency, custom public transition events with Stateless timing, and inline lifecycle calls while retaining asynchronous `ValueTask` triggers on 2026-09-05
 

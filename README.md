@@ -55,41 +55,60 @@ Add `TedToolkit.Orchestration.Pipeline` from the feed that contains your build. 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using TedToolkit.Orchestration.Pipeline;
+using TedToolkit.Orchestration.Pipeline.Attributes;
 
-using var services = new ServiceCollection().BuildServiceProvider();
-var pipeline = new SumPipeline(services);
+var pipeline = new Sum.Pipeline();
 var results = pipeline.Execute(leftValue: 40);
 
 Console.WriteLine(results.Add); // 42
 
-public sealed partial class SumPipeline : Pipeline
+[CompositeStep]
+public readonly ref partial struct Sum(int leftValue)
 {
-    protected override void Configuration(Builder pipeline)
+    private void Configuration(StepGraph pipeline)
     {
-        var left = pipeline.Value();
+        var left = pipeline.Value(leftValue);
         var right = pipeline.Value(2);
         var add = pipeline.Add(left, right);
     }
 }
 
-internal readonly ref struct Value(int value) : IStep<int>
+internal readonly ref partial struct Value(int value) : IStep<int>
 {
     public int Execute(CancellationToken token = default) => value;
 }
 
-internal readonly ref struct Add(int a, int b) : IStep<int>
+internal readonly ref partial struct Add(int a, int b) : IStep<int>
 {
     public int Execute(CancellationToken token = default) => a + b;
 }
 ```
 
-The generator turns the omitted `Value` argument into the `leftValue` execution parameter, recognizes the fixed value `2`, binds both results into the named `add` node, and generates the typed `Results.Add` property. An asynchronous step changes the entry point to `ExecuteAsync`; completion-only callers use `ExecuteWithoutResults` or `ExecuteWithoutResultsAsync`.
+The Composite primary-constructor parameters are its typed inputs. The generator recognizes the fixed value `2`, binds both results into the named `add` node, and generates the typed `Results.Add` property. An asynchronous child changes the entry point to `ExecuteAsync`; completion-only callers use `ExecuteWithoutResults` or `ExecuteWithoutResultsAsync`. A Composite can also be registered in another `StepGraph`; only a root caller uses the generated nested `Pipeline` facade.
+
+Node-specific orchestration stays in `Configuration`:
+
+```csharp
+var prepare = pipeline.Prepare();
+var work = pipeline.Work()
+    .DependsOn(prepare)
+    .WithRetry(2)
+    .WithTimeout(5_000)
+    .WithDisplayName("Main work");
+```
+
+`DependsOn` waits for successful completion without transporting data. Retry, timeout, and display identity belong only to that registration; omitted policy means zero retries and infinite timeout. Every Step receives a generated required `DisplayName` property. Mark a Step with `[StepLogger]` when it also needs a generated `ILogger` whose category contains the Step type and display name.
+
+Retrying a Composite registration reruns its complete child graph, so already-completed child side effects may occur again. A service-requiring root `Pipeline` retains the caller-provided `IServiceProvider`; registering that facade as a singleton therefore explicitly selects the root provider, and the library neither creates nor repairs scopes.
+
+Factory overload resolution distinguishes same-named Steps when their signatures differ. If public Steps from different assemblies have the same name and signature, call the generated namespace-qualified factory class explicitly (for example, `Alpha_IncrementExtensions.Increment(pipeline, value)`) to select the exact Step symbol.
 
 Pipeline also supports:
 
 - independent branches that start without waiting for unrelated work;
 - constructor parameters resolved from ordinary or keyed DI via `[FromServices]`;
-- per-step retry and cooperative timeout through `[StepPolicy]`;
+- per-node retry and cooperative timeout through Configuration modifiers;
+- control-only dependencies and immutable display metadata;
 - caller cancellation and draining of all work started by a parallel invocation;
 - typed intermediate results without an untyped runtime result store.
 
@@ -138,21 +157,28 @@ StateMachine is intentionally not a concurrency controller. It rejects same-inst
 
 ## Benchmark snapshot
 
-These are local BenchmarkDotNet 0.15.8 measurements recorded on 2026-09-05 using .NET 10.0.11 and an Intel Core i7-12700H. They are evidence for the measured workloads, not universal rankings.
+These are local BenchmarkDotNet 0.15.8 measurements recorded on 2026-09-08 using .NET 10.0.11 and an Intel Core i7-12700H. They are evidence for the measured workloads, not universal rankings.
 
 ### Pipeline: four-operation yielding workloads
 
 | Implementation | Chain mean / allocation | Diamond mean / allocation |
 | --- | ---: | ---: |
-| Handwritten tasks | 3.44 μs / 560 B | 5.13 μs / 720 B |
-| TedPipeline | 3.36 μs / 688 B | 4.33 μs / 1,697 B |
-| WorkflowFramework | 3.47 μs / 1,032 B | 8.05 μs / 4,429 B |
-| PipelineNet | 10.46 μs / 2,878 B | Not represented |
-| TPL Dataflow | 13.65 μs / 2,173 B | 14.45 μs / 2,318 B |
+| Handwritten tasks | 2.850 μs / 560 B | 2.810 μs / 720 B |
+| TedPipeline | 2.895 μs / 680 B | 4.362 μs / 1,682 B |
+| WorkflowFramework | 3.294 μs / 1,032 B | 8.006 μs / 4,433 B |
+| PipelineNet | 5.764 μs / 2,847 B | Not represented |
+| TPL Dataflow | 13.109 μs / 2,161 B | 11.800 μs / 2,314 B |
 
-The chain intervals overlap, so the small difference between handwritten, TedPipeline, and WorkflowFramework is inconclusive. TedPipeline's diamond mean is lower than handwritten in this run, but the handwritten interval is wide and overlaps; this is not proof of a general speed advantage. Pure synchronous completion-only execution measured 11.95 ns and 0 B versus 2.54 ns and 0 B handwritten.
+The chain intervals overlap, so the small difference between handwritten and TedPipeline is inconclusive. The diamond workload exposes additional generated coordination: TedPipeline was slower and allocated 962 B more than the lower-abstraction handwritten baseline in this run. Pure synchronous completion-only execution measured 11.645 ns and 0 B versus 2.659 ns and 0 B handwritten.
 
-[Method, complete tables, confidence intervals, versions, and limitations](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/retry-exhaustion-benchmark.md)
+A focused 2026-09-08 Composite run measured flat versus one-boundary nested execution at
+5.235 ns / 0 B versus 6.264 ns / 0 B synchronously, 47.79 ns / 288 B versus
+55.80 ns / 360 B for completed Tasks, and 1.793 μs / 440 B versus 1.863 μs / 560 B
+for yielding Tasks. The synchronous and yielding confidence intervals overlapped. See the
+[Composite Step benchmark record](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/composite-step-results.md)
+for the exact commands and limitations.
+
+[Method, complete tables, confidence intervals, versions, and limitations](benchmarks/TedToolkit.Orchestration.Pipeline.Benchmarks/composite-step-results.md)
 
 ### StateMachine: generated direct dispatch
 
@@ -186,16 +212,11 @@ It does not provide:
 
 ## Diagnostics
 
-Pipeline diagnostics use the `TTP` prefix. They reject invalid graph shapes, type/nullability mismatches, unsupported step contracts, policy errors, dynamic declarations, and generated-name collisions. `TTP014`–`TTP016` also flag declaration APIs used as runtime work or direct step calls that bypass declared policies.
+Pipeline diagnostics use the `TTP` prefix. They reject invalid graph shapes, type/nullability mismatches, unsupported Step contracts, modifier errors, dynamic declarations, and generated-name collisions. `TTP014`, `TTP015`, and `TTP017` flag declaration APIs used outside a Composite configuration.
 
 StateMachine diagnostics use `TTSM001` for invalid declarations or generated-member collisions and `TTSM002` for direct `State` assignment that would bypass generated lifecycle behavior.
 
-Diagnostic severity can be configured through standard `.editorconfig` settings:
-
-```ini
-[*.cs]
-dotnet_diagnostic.TTP016.severity = none
-```
+Diagnostic severity can be configured through standard `.editorconfig` settings.
 
 ## Development
 

@@ -6,7 +6,7 @@ Scope: the runtime package, generated public surface and bundled analyzer. Owner
 
 Status: Active. Strength: Required.
 
-Resolve type compatibility, graph shape, ordering and fixed policy values during generation. Emit direct typed Step construction and execution, with common policy helpers in the base class; avoid runtime graph interpretation, reflection-based activation and interface boxing in execution. This keeps composition conveniences out of the hot path. Review whenever a new runtime abstraction is proposed.
+Resolve type compatibility, graph shape, ordering and fixed policy values during generation. Emit direct typed Step construction and execution, with graph-independent policy helpers in the Runtime compiler-support contract; avoid runtime graph interpretation, reflection-based activation and interface boxing in execution. This keeps composition conveniences out of the hot path. Review whenever a new runtime abstraction is proposed.
 
 ## P2 - Pay only for enabled capabilities
 
@@ -47,6 +47,14 @@ Status: Active. Strength: Required. Owner: library maintainers. Approved by the 
 The caller owns the service provider, service scope and invocation cancellation boundary. A Step owns only one attempt; asynchronous work owns the state and cleanup it needs until its returned Task completes. The generated executor drains all work it starts before the invocation completes. Resolve services per Step invocation without disposing them, construct a fresh Step for every retry, finish synchronous disposal before retrying, and keep asynchronous cleanup inside the returned operation.
 
 This prevents leaks, use-after-dispose failures, orphaned work and ambiguous cancellation while respecting ref-struct lifetimes. Cancellation remains cooperative and does not imply forced termination of synchronous code. Any framework-owned service scope, retained Step instance, detached background task or invocation-surviving execution state requires an accepted ADR and a product-intent review.
+
+## P8 - Generate only consumer-dependent code
+
+Status: Active. Strength: Required. Owner: library maintainers. Approved by the user on 2026-09-08. Applies to Pipeline and StateMachine. Review whenever fixed support code is proposed for generation or generated code needs a new cross-assembly seam.
+
+Generate code only when its shape or semantics depends on consumer declarations and cannot be represented faithfully as stable compiled code. Put graph-independent algorithms, resource helpers, and reusable semantics in ordinary Runtime or analyzer source. Do not generate identical fixed support merely to bypass accessibility or hide an API; expose a narrow `[EditorBrowsable(EditorBrowsableState.Never)]` compiler-services contract when generated consumer code needs cross-assembly access.
+
+This keeps generated output small and inspectable, avoids duplicating implementation into every consumer assembly, and gives fixed behavior one tested implementation. A generated fixed helper requires an accepted exception demonstrating why ordinary compiled code cannot preserve the required semantics or performance.
 
 ## Exceptions
 

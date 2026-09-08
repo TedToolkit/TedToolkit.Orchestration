@@ -32,7 +32,11 @@ if (args.Contains("--verify"))
     {
         await new ValueAsyncBenchmarks { Mode = mode }.Setup();
         Console.WriteLine($"PASS mixed generated and handwritten execution, {mode}");
+        await new CompositeNestingBenchmarks { Mode = mode }.Verify();
+        Console.WriteLine($"PASS flat and nested Composite execution, {mode}");
     }
+    new CompositeSyncNestingBenchmarks().Verify();
+    Console.WriteLine("PASS synchronous flat and nested Composite execution");
     return;
 }
 var config = DefaultConfig.Instance

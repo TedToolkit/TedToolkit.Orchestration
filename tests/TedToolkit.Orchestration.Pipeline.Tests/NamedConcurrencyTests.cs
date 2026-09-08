@@ -3,11 +3,11 @@ namespace TedToolkit.Orchestration.Pipeline.Tests;
 public partial class ExecutorGeneratorTests
 {
     private const string ConcurrentSteps = """
-        internal readonly ref struct Start(Func<CancellationToken, Task<int>> work) : IAsyncStep<int>
+        internal readonly ref partial struct Start(Func<CancellationToken, Task<int>> work) : IAsyncStep<int>
         {
             public Task<int> ExecuteAsync(CancellationToken token) => work(token);
         }
-        internal readonly ref struct After(int value, Func<int, CancellationToken, Task<int>> work) : IAsyncStep<int>
+        internal readonly ref partial struct After(int value, Func<int, CancellationToken, Task<int>> work) : IAsyncStep<int>
         {
             public Task<int> ExecuteAsync(CancellationToken token) => work(value, token);
         }
@@ -17,21 +17,25 @@ public partial class ExecutorGeneratorTests
     public async Task ChildStartsAsSoonAsItsOwnDependencyCompletesAndRootRunsOnce()
     {
         var result = await Run(NamedSteps + ConcurrentSteps + """
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(
+                Func<CancellationToken, Task<int>> rootWork,
+                Func<int, CancellationToken, Task<int>> slowWork,
+                Func<int, CancellationToken, Task<int>> fastWork,
+                Func<int, CancellationToken, Task<int>> childWork)
             {
-                private void Configure(Builder p)
+                private void Configuration(StepGraph p)
                 {
-                    var root = p.Start(); var slow = p.After(root); var fast = p.After(root);
-                    var child = p.After(fast); var sum = p.Add(slow, child);
+                    var root = p.Start(rootWork); var slow = p.After(root, slowWork); var fast = p.After(root, fastWork);
+                    var child = p.After(fast, childWork); var sum = p.Add(slow, child);
                 }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
                 var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var childFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var roots = 0;
-                var execution = new Example(services).ExecuteAsync(
+                var execution = new Example.Pipeline().ExecuteAsync(
                     rootWork: token => Task.FromResult(++roots),
                     slowWork: async (value, token) => { started.SetResult(); await release.Task; return value + 1; },
                     fastWork: async (value, token) => { await started.Task; return value + 2; },
@@ -49,7 +53,6 @@ public partial class ExecutorGeneratorTests
     public async Task FailureAndCallerCancellationDrainStartedSiblings(bool callerCancels, bool discard)
     {
         var body = """
-            using var services = new ServiceCollection().BuildServiceProvider();
             using var cancellation = new CancellationTokenSource();
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -57,7 +60,7 @@ public partial class ExecutorGeneratorTests
             var cleaned = 0;
             CancellationToken stepToken = default;
             var expected = new InvalidOperationException("original");
-            Task execution = new Example(services).METHOD(
+            Task execution = new Example.Pipeline().METHOD(
                 rootWork: token => Task.FromResult(1),
                 slowWork: async (value, token) =>
                 {
@@ -83,11 +86,16 @@ public partial class ExecutorGeneratorTests
             """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")
             .Replace("FAIL_ACTION", callerCancels ? "cancellation.Cancel(); await Task.Delay(-1, token); return 1;" : "throw expected;");
         var result = await Run(NamedSteps + ConcurrentSteps + """
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(
+                Func<CancellationToken, Task<int>> rootWork,
+                Func<int, CancellationToken, Task<int>> slowWork,
+                Func<int, CancellationToken, Task<int>> failWork)
             {
-                private void Configure(Builder p)
+                private void Configuration(StepGraph p)
                 {
-                    var root = p.Start(); var slow = p.After(root); var fail = p.After(root); p.Add(slow, fail);
+                    var root = p.Start(rootWork); var slow = p.After(root, slowWork);
+                    var fail = p.After(root, failWork); p.Add(slow, fail);
                 }
             }
             """ + AsyncScenario(body));
@@ -98,10 +106,13 @@ public partial class ExecutorGeneratorTests
     public async Task ConcurrentInvocationsKeepUnboundParametersAndResultsSeparate()
     {
         var result = await Run(ConcurrentSteps + """
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) { var node = p.Start(); } }
+            [CompositeStep]
+            public readonly ref partial struct Example(Func<CancellationToken, Task<int>> work)
+            {
+                private void Configuration(StepGraph p) { var node = p.Start(work); }
+            }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                var e = new Example(services);
+                var e = new Example.Pipeline();
                 var first = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
                 var a = e.ExecuteAsync(_ => first.Task);
                 var b = await e.ExecuteAsync(_ => Task.FromResult(2));
