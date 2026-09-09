@@ -13,7 +13,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.6" />
     <PackageVersion Include="Sourcy.DotNet" Version="1.1.1" />
     <PackageVersion Include="Stateless" Version="5.20.1" />
-    <PackageVersion Include="TedToolkit.RoslynHelper" Version="2026.9.4" />
+    <PackageVersion Include="TedToolkit.RoslynHelper" Version="2026.9.9" />
     <PackageVersion Include="TUnit" Version="1.63.0" />
   </ItemGroup>
 </Project>
