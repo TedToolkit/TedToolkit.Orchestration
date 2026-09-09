@@ -12,7 +12,7 @@ namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 // Configuration is declaration-only; expressions are mirrored into per-step execution methods.
 internal sealed class GraphReader
 {
-    private readonly SourceProductionContext _context;
+    private readonly Action<Diagnostic> _reportDiagnostic;
     private readonly SemanticModel _model;
     private readonly MethodDeclarationSyntax _configure;
     private readonly IReadOnlyList<StepFactory> _factories;
@@ -21,11 +21,12 @@ internal sealed class GraphReader
     private readonly List<GraphNode> _nodes = new();
     private readonly Dictionary<ILocalSymbol, VariableDeclaratorSyntax> _values = new(SymbolEqualityComparer.Default);
     private bool _failed;
-    internal GraphReader(SourceProductionContext context, Compilation compilation, MethodDeclarationSyntax configure,
+    internal GraphReader(Action<Diagnostic> reportDiagnostic, Compilation compilation,
+        MethodDeclarationSyntax configure,
         IReadOnlyList<StepFactory> factories,
         IReadOnlyDictionary<IParameterSymbol, string>? inputs = null)
     {
-        _context = context;
+        _reportDiagnostic = reportDiagnostic;
         _model = compilation.GetSemanticModel(configure.SyntaxTree);
         _configure = configure;
         _factories = factories;
@@ -252,7 +253,9 @@ internal sealed class GraphReader
             if (node.Factory.Result is null || !StepSymbols.SameType(node.Factory.Result, parameter.Type))
             {
                 _failed = true;
-                _context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.ResultTypeMismatch, argument.Syntax.GetLocation(), node.Factory.Result?.ToDisplayString() ?? "void", parameter.Name, parameter.Type.ToDisplayString()));
+                _reportDiagnostic(Diagnostic.Create(PipelineDiagnostics.ResultTypeMismatch,
+                    argument.Syntax.GetLocation(), node.Factory.Result?.ToDisplayString() ?? "void",
+                    parameter.Name, parameter.Type.ToDisplayString()));
             }
             return new NodeArgument { Source = node };
         }
@@ -272,7 +275,11 @@ internal sealed class GraphReader
     }
     internal static string Capitalize(string value) => char.ToUpperInvariant(value[0]) + value.Substring(1);
     private void Fail(SyntaxNode syntax, string reason)
-    { _failed = true; _context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StaticGraph, syntax.GetLocation(), reason)); }
+    {
+        _failed = true;
+        _reportDiagnostic(Diagnostic.Create(
+            PipelineDiagnostics.StaticGraph, syntax.GetLocation(), reason));
+    }
 }
 
 internal sealed class NodeArgument

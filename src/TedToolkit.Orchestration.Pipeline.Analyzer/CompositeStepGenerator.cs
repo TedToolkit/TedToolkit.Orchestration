@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using System.Text;
+using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
 using TedToolkit.RoslynHelper;
 using TedToolkit.RoslynHelper.Syntaxes;
 using static TedToolkit.Orchestration.Pipeline.Analyzer.GeneratedCode;
@@ -18,16 +17,23 @@ internal static class CompositeStepGenerator
 {
     private const string CompositeHintSuffix = ".CompositeStep.g.cs";
 
-    internal static bool Generate(SourceProductionContext context, Compilation compilation,
-        ImmutableArray<MethodDeclarationSyntax> methods, CSharpParseOptions options)
+    internal static CompositeGenerationResult Generate(
+        Compilation compilation,
+        ImmutableArray<MethodDeclarationSyntax> methods,
+        CSharpParseOptions options,
+        ImmutableArray<GeneratedSource> contextSources,
+        CancellationToken cancellationToken)
     {
+        var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+        var sources = ImmutableArray.CreateBuilder<GeneratedSource>();
         var configurations = methods.Where(method =>
         {
             var symbol = compilation.GetSemanticModel(method.SyntaxTree).GetDeclaredSymbol(method);
             return symbol is IMethodSymbol candidate &&
                 StepContextEmitter.HasAttribute(candidate.ContainingType, StepContextEmitter.CompositeAttributeName);
         }).ToArray();
-        if (configurations.Length == 0) return false;
+        if (configurations.Length == 0)
+            return new CompositeGenerationResult(sources.ToImmutable(), diagnostics.ToImmutable());
 
         var valid = new List<MethodDeclarationSyntax>();
         foreach (var configuration in configurations)
@@ -36,19 +42,22 @@ internal static class CompositeStepGenerator
                 .GetDeclaredSymbol(configuration)!;
             var reason = ContractError(configuration, method, compilation);
             if (reason is null) valid.Add(configuration);
-            else context.ReportDiagnostic(Diagnostic.Create(
+            else diagnostics.Add(Diagnostic.Create(
                 PipelineDiagnostics.StaticGraph, configuration.GetLocation(), reason));
         }
-        if (valid.Count == 0) return true;
+        if (valid.Count == 0)
+            return new CompositeGenerationResult(sources.ToImmutable(), diagnostics.ToImmutable());
 
-        var prepared = PrepareCompilation(context, compilation, valid, options);
+        var prepared = PrepareCompilation(
+            diagnostics.Add, compilation, valid, options, contextSources);
         var bound = prepared.Compilation;
         var factories = prepared.Factories;
+        sources.Add(new GeneratedSource("CompositeStepExtensions.g.cs", prepared.ExtensionsText));
 
         var graphs = new List<CompositeGraph>();
         foreach (var syntax in valid)
         {
-            context.CancellationToken.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
             var method = (IMethodSymbol)bound.GetSemanticModel(syntax.SyntaxTree).GetDeclaredSymbol(syntax)!;
             var factory = factories.Single(candidate => candidate.IsComposite &&
                 SymbolEqualityComparer.Default.Equals(candidate.Type, method.ContainingType));
@@ -58,11 +67,12 @@ internal static class CompositeStepGenerator
                 inputMap.Add(inputs[index], "__root" + index);
             var names = new HashSet<string>(FactoryNames(syntax), StringComparer.Ordinal);
             var selected = factories.Where(candidate => names.Contains(candidate.Type.Name)).ToArray();
-            var nodes = new GraphReader(context, bound, syntax, selected, inputMap).Read();
+            var nodes = new GraphReader(diagnostics.Add, bound, syntax, selected, inputMap).Read();
             if (nodes is not null) graphs.Add(new CompositeGraph(syntax, method.ContainingType, factory, inputs, nodes));
         }
 
-        if (!TryResolveGraphProperties(context, graphs)) return true;
+        if (!TryResolveGraphProperties(diagnostics.Add, graphs))
+            return new CompositeGenerationResult(sources.ToImmutable(), diagnostics.ToImmutable());
         var graphSources = graphs.Select(graph => (
             Graph: graph,
             MetadataName: GeneratedNames.MetadataName(graph.Owner),
@@ -77,35 +87,39 @@ internal static class CompositeStepGenerator
                 ? GeneratedNames.DisambiguateHintName(
                     source.HintName, source.MetadataName, CompositeHintSuffix)
                 : source.HintName;
-            context.AddSource(hintName,
+            sources.Add(new GeneratedSource(hintName,
                 CompositeStepEmitter.Emit(bound, source.Graph.Owner, source.Graph.Syntax,
-                    source.Graph.Nodes, source.Graph.Inputs, source.Graph.Factory.RequiresServices));
+                    source.Graph.Nodes, source.Graph.Inputs, source.Graph.Factory.RequiresServices)));
         }
-        return true;
+        return new CompositeGenerationResult(sources.ToImmutable(), diagnostics.ToImmutable());
     }
 
-    private static (Compilation Compilation, List<StepFactory> Factories) PrepareCompilation(
-        SourceProductionContext context, Compilation compilation,
-        IReadOnlyList<MethodDeclarationSyntax> configurations, CSharpParseOptions options)
+    private static (Compilation Compilation, List<StepFactory> Factories, string ExtensionsText)
+        PrepareCompilation(
+            Action<Diagnostic> reportDiagnostic,
+            Compilation compilation,
+            IReadOnlyList<MethodDeclarationSyntax> configurations,
+            CSharpParseOptions options,
+            ImmutableArray<GeneratedSource> contextSources)
     {
-        var contextSources = StepContextEmitter.Emit(compilation).ToArray();
+        // Context members must be present before Composite result stubs are bound.
         var prepared = compilation.AddSyntaxTrees(contextSources.Select(source =>
             CSharpSyntaxTree.ParseText(source.Source, options, source.HintName)));
+        // Results types must exist before generated Step factories can be typed.
         var stubs = configurations.Select(configuration => CompositeStub(prepared, configuration)).ToArray();
         prepared = prepared.AddSyntaxTrees(stubs.Select((source, index) =>
             CSharpSyntaxTree.ParseText(source, options, "CompositeResults" + index + ".g.cs")));
 
         var requestedNames = new HashSet<string>(
             configurations.SelectMany(FactoryNames), StringComparer.Ordinal);
-        var factories = CollectLeafFactories(context, prepared, requestedNames);
+        var factories = CollectLeafFactories(reportDiagnostic, prepared, requestedNames);
         factories.AddRange(CollectCompositeFactories(prepared, configurations, requestedNames));
         var extensionsText = StepFactory.EmitExtensions(
             prepared, factories, PipelineSymbols.StepGraphName);
-        context.AddSource("CompositeStepExtensions.g.cs",
-            SourceText.From(extensionsText, Encoding.UTF8));
+        // Configuration invocations bind only after their generated extension methods exist.
         var bound = prepared.AddSyntaxTrees(CSharpSyntaxTree.ParseText(
             extensionsText, options, "CompositeStepExtensions.g.cs"));
-        return (bound, factories.Select(factory => factory.Rebind(bound)).ToList());
+        return (bound, factories.Select(factory => factory.Rebind(bound)).ToList(), extensionsText);
     }
 
     internal static string? ContractError(INamedTypeSymbol owner, Compilation compilation)
@@ -184,7 +198,7 @@ internal static class CompositeStepGenerator
                 reference.SyntaxTree == declaration.SyntaxTree && reference.Span == declaration.Span));
     }
 
-    private static List<StepFactory> CollectLeafFactories(SourceProductionContext context,
+    private static List<StepFactory> CollectLeafFactories(Action<Diagnostic> reportDiagnostic,
         Compilation compilation, HashSet<string> requestedNames)
     {
         var factories = new List<StepFactory>();
@@ -194,7 +208,7 @@ internal static class CompositeStepGenerator
             var reason = StepSymbols.InvalidContract(type, compilation);
             if (reason is not null)
             {
-                if (requestedNames.Contains(type.Name)) context.ReportDiagnostic(Diagnostic.Create(
+                if (requestedNames.Contains(type.Name)) reportDiagnostic(Diagnostic.Create(
                     PipelineDiagnostics.InvalidContract, type.Locations.FirstOrDefault(location => location.IsInSource),
                     type.Name, reason));
                 continue;
@@ -242,7 +256,7 @@ internal static class CompositeStepGenerator
     }
 
     private static bool TryResolveGraphProperties(
-        SourceProductionContext context, IReadOnlyList<CompositeGraph> graphs)
+        Action<Diagnostic> reportDiagnostic, IReadOnlyList<CompositeGraph> graphs)
     {
         var byType = graphs.ToDictionary(graph => graph.Owner, SymbolEqualityComparer.Default);
         var visiting = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
@@ -252,7 +266,7 @@ internal static class CompositeStepGenerator
             if (visited.Contains(graph.Owner)) return true;
             if (!visiting.Add(graph.Owner))
             {
-                context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StaticGraph,
+                reportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StaticGraph,
                     graph.Syntax.GetLocation(), "Composite Step dependency cycle detected"));
                 return false;
             }

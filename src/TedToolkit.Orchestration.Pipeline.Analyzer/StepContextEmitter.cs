@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using TedToolkit.RoslynHelper;
 using Accessibility = Microsoft.CodeAnalysis.Accessibility;
 
@@ -17,30 +20,40 @@ internal static class StepContextEmitter
     internal const string LoggerAttributeName =
         "TedToolkit.Orchestration.Pipeline.Attributes.StepLoggerAttribute";
 
-    internal static IEnumerable<(string HintName, string Source)> Emit(Compilation compilation)
+    internal static StepContextSource? TryCreate(
+        GeneratorSyntaxContext context, CancellationToken cancellationToken)
     {
-        var sources = StepFactory.Types(compilation.Assembly.GlobalNamespace)
-            .Where(type => CanGenerate(type, compilation))
-            .Select(type =>
-            {
-                var metadataName = GeneratedNames.MetadataName(type);
-                return (Type: type, MetadataName: metadataName,
-                    HintName: GeneratedNames.HintName(type, ContextHintSuffix));
-            })
-            .ToArray();
+        var declaration = (StructDeclarationSyntax)context.Node;
+        var type = context.SemanticModel.GetDeclaredSymbol(
+            declaration, cancellationToken) as INamedTypeSymbol;
+        if (type is null || !CanGenerate(type, context.SemanticModel.Compilation))
+            return null;
+        var first = type.DeclaringSyntaxReferences.FirstOrDefault();
+        if (first is null || first.SyntaxTree != declaration.SyntaxTree || first.Span != declaration.Span)
+            return null;
+        return new StepContextSource(
+            GeneratedNames.MetadataName(type),
+            GeneratedNames.HintName(type, ContextHintSuffix),
+            Source(type));
+    }
+
+    internal static ImmutableArray<GeneratedSource> Resolve(
+        ImmutableArray<StepContextSource> sources)
+    {
         var collisions = new HashSet<string>(sources
             .GroupBy(source => source.HintName, StringComparer.Ordinal)
             .Where(group => group.Count() > 1)
             .Select(group => group.Key), StringComparer.Ordinal);
-
+        var result = ImmutableArray.CreateBuilder<GeneratedSource>(sources.Length);
         foreach (var source in sources)
         {
             var hintName = collisions.Contains(source.HintName)
                 ? GeneratedNames.DisambiguateHintName(
                     source.HintName, source.MetadataName, ContextHintSuffix)
                 : source.HintName;
-            yield return (hintName, Source(source.Type));
+            result.Add(new GeneratedSource(hintName, source.Source));
         }
+        return result.MoveToImmutable();
     }
 
     internal static bool HasAttribute(INamedTypeSymbol type, string metadataName) =>
@@ -87,5 +100,36 @@ internal static class StepContextEmitter
         }
         builder.AppendLine("}");
         return builder.ToString();
+    }
+}
+
+internal sealed class StepContextSource : IEquatable<StepContextSource>
+{
+    internal StepContextSource(string metadataName, string hintName, string source)
+    {
+        MetadataName = metadataName;
+        HintName = hintName;
+        Source = source;
+    }
+
+    internal string MetadataName { get; }
+    internal string HintName { get; }
+    internal string Source { get; }
+
+    public bool Equals(StepContextSource? other) => other is not null &&
+        StringComparer.Ordinal.Equals(MetadataName, other.MetadataName) &&
+        StringComparer.Ordinal.Equals(HintName, other.HintName) &&
+        StringComparer.Ordinal.Equals(Source, other.Source);
+
+    public override bool Equals(object? obj) => Equals(obj as StepContextSource);
+
+    public override int GetHashCode()
+    {
+        unchecked
+        {
+            var hash = StringComparer.Ordinal.GetHashCode(MetadataName);
+            hash = (hash * 397) ^ StringComparer.Ordinal.GetHashCode(HintName);
+            return (hash * 397) ^ StringComparer.Ordinal.GetHashCode(Source);
+        }
     }
 }
