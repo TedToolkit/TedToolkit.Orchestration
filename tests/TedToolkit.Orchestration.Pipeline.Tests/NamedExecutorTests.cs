@@ -5,35 +5,36 @@ namespace TedToolkit.Orchestration.Pipeline.Tests;
 public partial class ExecutorGeneratorTests
 {
     private const string NamedSteps = """
-        internal readonly ref struct Add(int a, int b) : IStep<int>
+        internal readonly ref partial struct Add(int a, int b) : IStep<int>
         {
             public int Execute(CancellationToken token) => a + b;
         }
         public sealed class Sink { public int Value; public int Calls; }
-        internal readonly ref struct Store(int value, [FromServices] Sink sink) : IStep
+        internal readonly ref partial struct Store(int value, [FromServices] Sink sink) : IStep
         {
             public void Execute(CancellationToken token) { sink.Value = value; sink.Calls++; }
         }
         """;
 
     [Test]
-    public async Task UnboundParametersFixedValuesAliasesAndTypedResultsWorkAcrossInvocations()
+    public async Task InputsFixedValuesAliasesAndTypedResultsWorkAcrossInvocations()
     {
         var result = await Run(NamedSteps + """
-            internal readonly ref struct Load(int value) : IAsyncStep<int>
+            internal readonly ref partial struct Load(int value) : IAsyncStep<int>
             {
                 public Task<int> ExecuteAsync(CancellationToken token) => Work(value);
                 private static async Task<int> Work(int value) { await Task.Yield(); return value; }
             }
-            internal readonly ref struct Notify([FromServices] Sink sink) : IAsyncStep
+            internal readonly ref partial struct Notify([FromServices] Sink sink) : IAsyncStep
             {
                 public Task ExecuteAsync(CancellationToken token) { sink.Calls++; return Task.CompletedTask; }
             }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(int fixedValue, int loadValue)
             {
-                private void Configure(Builder p, int fixedValue)
+                private void Configuration(StepGraph p)
                 {
-                    var load = p.Load();
+                    var load = p.Load(loadValue);
                     var alias = load;
                     var sum = p.Add(alias, fixedValue);
                     p.Store(sum);
@@ -43,11 +44,11 @@ public partial class ExecutorGeneratorTests
             """ + AsyncScenario("""
                 var sink = new Sink();
                 using var services = new ServiceCollection().AddSingleton(sink).BuildServiceProvider();
-                var executor = new Example(services, 2);
-                var first = await executor.ExecuteAsync(loadValue: 40);
-                var second = await executor.ExecuteAsync(loadValue: 8);
-                await executor.ExecuteWithoutResultsAsync(loadValue: 3);
-                return $"{first.Load}:{first.Sum}:{second.Sum}:{sink.Value}:{sink.Calls}:{typeof(Example.Results).IsValueType}:{typeof(Example.Builder).IsValueType}";
+                var executor = new Example.Pipeline(services);
+                var first = await executor.ExecuteAsync(fixedValue: 2, loadValue: 40);
+                var second = await executor.ExecuteAsync(fixedValue: 2, loadValue: 8);
+                await executor.ExecuteWithoutResultsAsync(fixedValue: 2, loadValue: 3);
+                return $"{first.Load}:{first.Sum}:{second.Sum}:{sink.Value}:{sink.Calls}:{typeof(Example.Results).IsValueType}:{typeof(StepGraph).IsValueType}";
                 """));
         await Assert.That(result).IsEqualTo("40:42:10:5:6:True:True");
     }
@@ -56,13 +57,13 @@ public partial class ExecutorGeneratorTests
     public async Task UnnamedNodesUseTypeAndZeroBasedRegistrationIndex()
     {
         var result = await Run(NamedSteps + """
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(int add0A, int add0B, int add1A)
             {
-                private void Configure(Builder p) { p.Add(); p.Add(b: 5); }
+                private void Configuration(StepGraph p) { p.Add(add0A, add0B); p.Add(add1A, b: 5); }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                var result = new Example(services).Execute(add0A: 1, add0B: 2, add1A: 4);
+                var result = new Example.Pipeline().Execute(add0A: 1, add0B: 2, add1A: 4);
                 return $"{result.Add0}:{result.Add1}";
                 """));
         await Assert.That(result).IsEqualTo("3:9");
@@ -75,8 +76,9 @@ public partial class ExecutorGeneratorTests
     public async Task CompilerChecksGeneratedExecutionArguments(string call, string diagnostic)
     {
         var generated = await Generate(NamedSteps + """
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) { var sum = p.Add(); } }
-            """ + AsyncScenario("using var services = new ServiceCollection().BuildServiceProvider(); var e = new Example(services); " + call + " return string.Empty;"));
+            [CompositeStep]
+            public readonly ref partial struct Example(int sumA, int sumB) { private void Configuration(StepGraph p) { var sum = p.Add(sumA, sumB); } }
+            """ + AsyncScenario("var e = new Example.Pipeline(); " + call + " return string.Empty;"));
         await Assert.That(generated.Diagnostics.Any(item => item.Id == diagnostic)).IsTrue();
     }
 
@@ -89,7 +91,7 @@ public partial class ExecutorGeneratorTests
     [Arguments("for (var i = 0; i < 2; i++) p.Add();")]
     public async Task DynamicOrReassignedGraphsAreRejected(string body)
     {
-        var generated = await Generate(NamedSteps + "public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) { " + body + " } }");
+        var generated = await Generate(NamedSteps + "[CompositeStep] public readonly ref partial struct Example { private void Configuration(StepGraph p) { " + body + " } }");
         await Assert.That(generated.Diagnostics.Any(item => item.Id == "TTP009")).IsTrue();
     }
 
@@ -97,9 +99,9 @@ public partial class ExecutorGeneratorTests
     public async Task DependencyNullabilityIsStillAnError()
     {
         var generated = await Generate("""
-            internal readonly ref struct Source : IStep<string?> { public string? Execute(CancellationToken token) => null; }
-            internal readonly ref struct Consume(string value) : IStep { public void Execute(CancellationToken token) {} }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) { var source = p.Source(); p.Consume(source); } }
+            internal readonly ref partial struct Source : IStep<string?> { public string? Execute(CancellationToken token) => null; }
+            internal readonly ref partial struct Consume(string value) : IStep { public void Execute(CancellationToken token) {} }
+            [CompositeStep]            public readonly ref partial struct Example { private void Configuration(StepGraph p) { var source = p.Source(); p.Consume(source); } }
             """);
         await Assert.That(generated.Diagnostics.Any(item => item.Id == "TTP001")).IsTrue();
     }
@@ -108,14 +110,13 @@ public partial class ExecutorGeneratorTests
     public async Task FixedDefaultAndNullDoNotBecomeExecutionParameters()
     {
         var result = await Run(NamedSteps + """
-            internal readonly ref struct Text(string? value) : IStep<string?> { public string? Execute(CancellationToken token) => value; }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            internal readonly ref partial struct Text(string? value) : IStep<string?> { public string? Execute(CancellationToken token) => value; }
+            [CompositeStep]            public readonly ref partial struct Example
             {
-                private void Configure(Builder p) { var zero = p.Add(default(int), 2); var text = p.Text((string?)null); }
+                private void Configuration(StepGraph p) { var zero = p.Add(default(int), 2); var text = p.Text((string?)null); }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                var results = new Example(services).Execute();
+                var results = new Example.Pipeline().Execute();
                 return $"{results.Zero}:{results.Text is null}";
                 """));
         await Assert.That(result).IsEqualTo("2:True");
@@ -125,10 +126,9 @@ public partial class ExecutorGeneratorTests
     public async Task EmptyConfigurationProducesParameterlessExecutions()
     {
         var result = await Run("""
-            public partial class Empty : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder pipeline) {} }
+            [CompositeStep]            public readonly ref partial struct Empty { private void Configuration(StepGraph pipeline) {} }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                var e = new Empty(services);
+                var e = new Empty.Pipeline();
                 e.Execute(); e.ExecuteWithoutResults();
                 return "done";
                 """));
@@ -139,17 +139,17 @@ public partial class ExecutorGeneratorTests
     public async Task SynchronousCompletionOnlyExecutionStillAllocatesZeroBytes()
     {
         var result = await Run(NamedSteps + """
-            internal readonly ref struct Capture(int value, Sink sink) : IStep { public void Execute(CancellationToken token) => sink.Value = value; }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            internal readonly ref partial struct Capture(int value, Sink sink) : IStep { public void Execute(CancellationToken token) => sink.Value = value; }
+            [CompositeStep]
+            public readonly ref partial struct Example(int value, Sink sink)
             {
-                private void Configure(Builder p, Sink sink) { var a = p.Add(b: 1); var b = p.Add(a, 2); p.Capture(b, sink); }
+                private void Configuration(StepGraph p) { var a = p.Add(value, 1); var b = p.Add(a, 2); p.Capture(b, sink); }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                var sink = new Sink(); var executor = new Example(services, sink);
-                for (var i = 0; i < 1000; i++) executor.ExecuteWithoutResults(i);
+                var sink = new Sink(); var executor = new Example.Pipeline();
+                for (var i = 0; i < 1000; i++) executor.ExecuteWithoutResults(i, sink);
                 var before = GC.GetAllocatedBytesForCurrentThread();
-                for (var i = 0; i < 1000; i++) executor.ExecuteWithoutResults(i);
+                for (var i = 0; i < 1000; i++) executor.ExecuteWithoutResults(i, sink);
                 var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
                 await Task.CompletedTask;
                 return $"{allocated}:{sink.Value}";
@@ -166,7 +166,7 @@ public partial class ExecutorGeneratorTests
             using var services = new ServiceCollection().BuildServiceProvider();
             using var cancellation = new CancellationTokenSource();
             Exception expected = MODE == 1 ? new OperationCanceledException() : new InvalidOperationException("original");
-            var executor = new Example(services);
+            var executor = new Example.Pipeline();
             if (MODE == 2) cancellation.Cancel();
             
             
@@ -178,8 +178,9 @@ public partial class ExecutorGeneratorTests
             }
             """.Replace("MODE", mode.ToString()).Replace("METHOD", discard ? "ExecuteWithoutResults" : "Execute");
         var result = await Run("""
-            internal readonly ref struct Fail(Exception error) : IStep { public void Execute(CancellationToken token) => throw error; }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) { p.Fail(); } }
+            internal readonly ref partial struct Fail(Exception error) : IStep { public void Execute(CancellationToken token) => throw error; }
+            [CompositeStep]
+            public readonly ref partial struct Example(Exception error) { private void Configuration(StepGraph p) { p.Fail(error); } }
             """ + AsyncScenario(body));
         await Assert.That(result).IsEqualTo("True:True");
     }
@@ -189,23 +190,22 @@ public partial class ExecutorGeneratorTests
     {
         var result = await Run("""
             public sealed class State { public int Attempts; public int Constructed; public int Disposed; public int Evaluations; }
-            [StepPolicy(RetryCount = 2)]
-            internal readonly ref struct Retry : IStep<int>, IDisposable
+            internal readonly ref partial struct Retry : IStep<int>, IDisposable
             {
                 private readonly State state;
                 public Retry(State state) { this.state = state; state.Constructed++; }
                 public int Execute(CancellationToken token) { if (++state.Attempts < 3) throw new InvalidOperationException(); return 42; }
                 public void Dispose() => state.Disposed++;
             }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(State state)
             {
                 private static State Evaluate(State state) { state.Evaluations++; return state; }
-                private void Configure(Builder p, State state) { var result = p.Retry(Evaluate(state)); }
+                private void Configuration(StepGraph p) { var result = p.Retry(Evaluate(state)).WithRetry(2); }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                var state = new State(); var e = new Example(services, state);
-                var result = e.Execute();
+                var state = new State(); var e = new Example.Pipeline();
+                var result = e.Execute(state);
                 return $"{result.Result}:{state.Attempts}:{state.Constructed}:{state.Disposed}:{state.Evaluations}";
                 """));
         await Assert.That(result).IsEqualTo("42:3:3:3:1");
@@ -215,7 +215,8 @@ public partial class ExecutorGeneratorTests
     public async Task PolicyBodiesAreOutsideMainFlowAndResultsRemainTyped()
     {
         var generated = await Generate(NamedSteps + """
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) { var a = p.Add(); p.Store(a); } }
+            [CompositeStep]
+            public readonly ref partial struct Example(int aA, int aB) { private void Configuration(StepGraph p) { var a = p.Add(aA, aB); p.Store(a); } }
             """);
         await NoErrors(generated);
         await Assert.That(generated.GeneratedSource.Contains("StepArgument<" )).IsTrue();
@@ -226,20 +227,20 @@ public partial class ExecutorGeneratorTests
     public async Task ConfigurationParametersAndStepNamesCannotShadowGeneratedLocals()
     {
         var result = await Run("""
-            internal readonly ref struct Capture(int index, int _owner, int __nodeIndex) : IStep<int>
+            internal readonly ref partial struct Capture(int index, int _owner, int __nodeIndex) : IStep<int>
             {
                 public int Execute(CancellationToken token) => index + _owner + __nodeIndex;
             }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(int services)
             {
-                private void Configure(Builder pipeline, int services)
+                private void Configuration(StepGraph pipeline)
                 {
                     var node = pipeline.Capture(services, 2, 3);
                 }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                return (new Example(services, 1).Execute()).Node.ToString();
+                return (new Example.Pipeline().Execute(1)).Node.ToString();
                 """));
         await Assert.That(result).IsEqualTo("6");
     }
@@ -248,25 +249,24 @@ public partial class ExecutorGeneratorTests
     public async Task SynchronousTimeoutStillObservesCooperativeCancellation()
     {
         var result = await Run("""
-            [StepPolicy(TimeoutMilliseconds = 30)]
-            internal readonly ref struct Wait : IStep<int>
+            internal readonly ref partial struct Wait : IStep<int>
             {
                 public int Execute(CancellationToken token) { token.WaitHandle.WaitOne(TimeSpan.FromSeconds(3)); return 42; }
             }
-            public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder pipeline) { pipeline.Wait(); } }
+            [CompositeStep]
+            public readonly ref partial struct Example { private void Configuration(StepGraph pipeline) { pipeline.Wait().WithTimeout(30); } }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
-                try { new Example(services).Execute(); return "unexpected"; }
+                try { new Example.Pipeline().Execute(); return "unexpected"; }
                 catch (TimeoutException) { return "timeout"; }
                 """));
         await Assert.That(result).IsEqualTo("timeout");
     }
 
     [Test]
-    [Arguments("public class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) {} }")]
-    [Arguments("public partial class Example<T> : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) {} }")]
-    [Arguments("public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { public Example() {} private void Configure(Builder p) {} }")]
-    [Arguments("public partial class Example : global::TedToolkit.Orchestration.Pipeline.Pipeline { private void Configure(Builder p) { var sum = p.Add(); var Sum = p.Add(); } }")]
+    [Arguments("[CompositeStep] public class Example { private void Configuration(StepGraph p) {} }")]
+    [Arguments("[CompositeStep] public readonly ref partial struct Example<T> { private void Configuration(StepGraph p) {} }")]
+    [Arguments("[CompositeStep] public readonly ref struct Example { private void Configuration(StepGraph p) {} }")]
+    [Arguments("[CompositeStep] public readonly ref partial struct Example { private void Configuration(StepGraph p) { var sum = p.Add(1, 2); var Sum = p.Add(3, 4); } }")]
     public async Task InvalidExecutorDeclarationsAndResultNamesAreRejected(string declaration)
     {
         var generated = await Generate(NamedSteps + declaration);

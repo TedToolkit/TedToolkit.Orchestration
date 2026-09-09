@@ -1,15 +1,16 @@
 using BenchmarkDotNet.Attributes;
+using TedToolkit.Orchestration.Pipeline.Attributes;
 
 namespace TedToolkit.Orchestration.Pipeline.Benchmarks;
 
 public sealed class ValueSink { public int Value; }
 
-internal readonly ref struct SyncAdd(int value, int amount) : IStep<int>
+internal readonly ref partial struct SyncAdd(int value, int amount) : IStep<int>
 {
     public int Execute(CancellationToken token) => value + amount;
 }
 
-internal readonly ref struct StoreValue(int value, ValueSink sink) : IStep
+internal readonly ref partial struct StoreValue(int value, ValueSink sink) : IStep
 {
     public void Execute(CancellationToken token) => sink.Value = value;
 }
@@ -17,12 +18,12 @@ internal readonly ref struct StoreValue(int value, ValueSink sink) : IStep
 public class ValueSyncBenchmarks
 {
     private readonly ValueSink _sink = new();
-    private SyncValuePipeline _runner = null!;
+    private SyncValuePipeline.Pipeline _runner = null!;
 
     [GlobalSetup]
     public void Setup()
     {
-        _runner = new SyncValuePipeline(EmptyServices.Instance, _sink);
+        _runner = new SyncValuePipeline.Pipeline();
         Handwritten();
         if (_sink.Value != 1028) throw new InvalidOperationException();
         _sink.Value = 0;
@@ -36,32 +37,32 @@ public class ValueSyncBenchmarks
     private static void Execute(int input, ValueSink sink, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var a = new SyncAdd(input, 1).Execute(token);
+        var a = new SyncAdd(input, 1) { DisplayName = "A" }.Execute(token);
         token.ThrowIfCancellationRequested();
-        var b = new SyncAdd(a, 1).Execute(token);
+        var b = new SyncAdd(a, 1) { DisplayName = "B" }.Execute(token);
         token.ThrowIfCancellationRequested();
-        var c = new SyncAdd(b, 1).Execute(token);
+        var c = new SyncAdd(b, 1) { DisplayName = "C" }.Execute(token);
         token.ThrowIfCancellationRequested();
-        var d = new SyncAdd(c, 1).Execute(token);
+        var d = new SyncAdd(c, 1) { DisplayName = "D" }.Execute(token);
         token.ThrowIfCancellationRequested();
-        new StoreValue(d, sink).Execute(token);
+        new StoreValue(d, sink) { DisplayName = "Store" }.Execute(token);
         token.ThrowIfCancellationRequested();
         
     }
 
-    [Benchmark] public void Generated() => _runner.ExecuteWithoutResults(1024);
+    [Benchmark] public void Generated() => _runner.ExecuteWithoutResults(1024, _sink);
 }
 
 public class ValueAsyncBenchmarks
 {
     private readonly ValueSink _sink = new();
-    private AsyncValuePipeline _runner = null!;
+    private AsyncValuePipeline.Pipeline _runner = null!;
     [Params(WorkMode.Completed, WorkMode.Yield)] public WorkMode Mode { get; set; }
 
     [GlobalSetup]
     public async Task Setup()
     {
-        _runner = new AsyncValuePipeline(EmptyServices.Instance, _sink, Mode);
+        _runner = new AsyncValuePipeline.Pipeline();
         await Handwritten();
         if (_sink.Value != 1028) throw new InvalidOperationException();
         _sink.Value = 0;
@@ -86,25 +87,27 @@ public class ValueAsyncBenchmarks
         token.ThrowIfCancellationRequested();
     }
 
-    [Benchmark] public Task Generated() => _runner.ExecuteWithoutResultsAsync(1024);
+    [Benchmark] public Task Generated() => _runner.ExecuteWithoutResultsAsync(1024, _sink, Mode);
 }
 
-internal partial class SyncValuePipeline : global::TedToolkit.Orchestration.Pipeline.Pipeline
+[CompositeStep]
+internal readonly ref partial struct SyncValuePipeline(int input, ValueSink sink)
 {
-    private void Configure(Builder p, ValueSink sink)
+    private void Configuration(StepGraph p)
     {
-        var a = p.SyncAdd(amount: 1);
+        var a = p.SyncAdd(input, 1);
         var b = p.SyncAdd(a, 1);
         var c = p.SyncAdd(b, 1);
         var d = p.SyncAdd(c, 1);
         p.StoreValue(d, sink);
     }
 }
-internal partial class AsyncValuePipeline : global::TedToolkit.Orchestration.Pipeline.Pipeline
+[CompositeStep]
+internal readonly ref partial struct AsyncValuePipeline(int input, ValueSink sink, WorkMode mode)
 {
-    private void Configure(Builder p, ValueSink sink, WorkMode mode)
+    private void Configuration(StepGraph p)
     {
-        var a = p.AddStep(amount: 1, mode: mode);
+        var a = p.AddStep(input, 1, mode);
         var b = p.AddStep(a, 1, mode);
         var c = p.AddStep(b, 1, mode);
         var d = p.AddStep(c, 1, mode);

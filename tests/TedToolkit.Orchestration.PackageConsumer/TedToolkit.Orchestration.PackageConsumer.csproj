@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../../externals/TedToolkit/props/AlmostAllFrameworks.props" />
+  <PropertyGroup>
+    <OutputType Condition="'$(TargetFramework)' != 'netstandard2.0' And '$(TargetFramework)' != 'netstandard2.1'">Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+    <PublishTrimmed Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</PublishTrimmed>
+    <TrimMode Condition="'$(PublishTrimmed)' == 'true'">link</TrimMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="TedToolkit.Orchestration.Pipeline" VersionOverride="1.0.0" />
+    <PackageReference Include="TedToolkit.Orchestration.StateMachine" VersionOverride="1.0.0" />
+  </ItemGroup>
+</Project>

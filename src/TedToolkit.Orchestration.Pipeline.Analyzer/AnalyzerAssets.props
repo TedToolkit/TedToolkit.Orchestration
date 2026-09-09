@@ -6,6 +6,8 @@
     <_TedPipelineAnalyzerDependency Include="$(_TedPipelineAnalyzerOutput)TedToolkit.RoslynHelper.dll" />
     <_TedPipelineAnalyzerDependency Include="$(_TedPipelineAnalyzerOutput)ZString.dll" />
     <_TedPipelineAnalyzerDependency Include="$(_TedPipelineAnalyzerOutput)System.Memory.dll" />
+    <_TedPipelineAnalyzerAsset Include="$(_TedPipelineAnalyzerOutput)TedToolkit.Orchestration.Pipeline.Analyzer.dll" />
+    <_TedPipelineAnalyzerAsset Include="@(_TedPipelineAnalyzerDependency)" />
     <Analyzer Include="@(_TedPipelineAnalyzerDependency)" />
   </ItemGroup>
 </Project>

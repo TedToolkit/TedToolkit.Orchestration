@@ -11,12 +11,12 @@ public partial class ExecutorGeneratorTests
     public async Task SerialEntrypointsMatchStepKindsAndHaveNoExceptionOrLocalFunctionWrappers(bool asynchronous)
     {
         var step = asynchronous
-            ? "internal readonly ref struct Work : IAsyncStep<int> { public Task<int> ExecuteAsync(CancellationToken token) => Task.FromResult(42); }"
-            : "internal readonly ref struct Work : IStep<int> { public int Execute(CancellationToken token) => 42; }";
+            ? "internal readonly ref partial struct Work : IAsyncStep<int> { public Task<int> ExecuteAsync(CancellationToken token) => Task.FromResult(42); }"
+            : "internal readonly ref partial struct Work : IStep<int> { public int Execute(CancellationToken token) => 42; }";
         var generated = await Generate(step + """
-            public sealed partial class Example : Pipeline
+            [CompositeStep]            public readonly ref partial struct Example
             {
-                protected override void Configuration(Builder p) { var work = p.Work(); }
+                private void Configuration(StepGraph p) { var work = p.Work(); }
             }
             """);
         await NoErrors(generated);
@@ -24,7 +24,7 @@ public partial class ExecutorGeneratorTests
         foreach (var name in new[] { "Execute", "ExecuteWithoutResults" })
         {
             var entry = owner.GetMembers(name + (asynchronous ? "Async" : "")).OfType<IMethodSymbol>().Single();
-            await Assert.That(entry.IsAsync).IsEqualTo(asynchronous);
+            await Assert.That(entry.IsAsync).IsFalse();
             await Assert.That(owner.GetMembers(name + (asynchronous ? "" : "Async")).Length).IsEqualTo(0);
             var syntax = (MethodDeclarationSyntax)await entry.DeclaringSyntaxReferences.Single().GetSyntaxAsync();
             await Assert.That(syntax.DescendantNodes().Any(node => node is TryStatementSyntax or LocalFunctionStatementSyntax)).IsFalse();
@@ -46,8 +46,7 @@ public partial class ExecutorGeneratorTests
             {
                 public object? GetService(Type type) { state.Resolutions++; return state; }
             }
-            [StepPolicy(RetryCount = 1)]
-            internal readonly ref struct Work : IAsyncStep<int>
+            internal readonly ref partial struct Work : IAsyncStep<int>
             {
                 private readonly State state;
                 public Work([FromServices] State state)
@@ -57,13 +56,13 @@ public partial class ExecutorGeneratorTests
                 }
                 public Task<int> ExecuteAsync(CancellationToken token) { state.Executions++; return Task.FromResult(42); }
             }
-            public sealed partial class Example : Pipeline
+            [CompositeStep]            public readonly ref partial struct Example
             {
-                protected override void Configuration(Builder p) { p.Work(); }
+                private void Configuration(StepGraph p) { p.Work().WithRetry(1); }
             }
             """ + AsyncScenario("""
                 var state = new State();
-                await new Example(new Services(state)).METHOD();
+                await new Example.Pipeline(new Services(state)).METHOD();
                 return $"{state.Constructions}:{state.Resolutions}:{state.Executions}";
                 """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")));
         await Assert.That(result).IsEqualTo("2:1:1");
@@ -75,10 +74,10 @@ public partial class ExecutorGeneratorTests
     public async Task SynchronousEntryNameCollisionsHaveAConfigurationDiagnostic(string name)
     {
         var generated = await Generate(NamedSteps + """
-            public sealed partial class Example : Pipeline
+            [CompositeStep]            public readonly ref partial struct Example
             {
                 public void METHOD() {}
-                protected override void Configuration(Builder p) { p.Add(1, 2); }
+                private void Configuration(StepGraph p) { p.Add(1, 2); }
             }
             """.Replace("METHOD", name));
         await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "TTP009")).IsTrue();

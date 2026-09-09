@@ -12,7 +12,8 @@ internal static class ExecutionPlan
         var ancestors = new Dictionary<GraphNode, HashSet<GraphNode>>();
         foreach (var node in nodes)
         {
-            var upstream = node.Arguments.Select(argument => argument.Source).OfType<GraphNode>().Distinct().ToArray();
+            var upstream = node.Arguments.Select(argument => argument.Source).OfType<GraphNode>()
+                .Concat(node.ControlDependencies).Distinct().ToArray();
             var reachable = new HashSet<GraphNode>(upstream);
             foreach (var dependency in upstream) reachable.UnionWith(ancestors[dependency]);
             if (ancestors.Keys.Any(previous => !reachable.Contains(previous))) return true;

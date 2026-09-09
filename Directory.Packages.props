@@ -8,11 +8,13 @@
     <PackageVersion Include="PipelineNet" Version="0.11.0" />
     <PackageVersion Include="WorkflowFramework" Version="1.0.10" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.6" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.6" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="Sourcy.DotNet" Version="1.1.1" />
     <PackageVersion Include="Stateless" Version="5.20.1" />
-    <PackageVersion Include="TedToolkit.RoslynHelper" Version="2026.9.4" />
+    <PackageVersion Include="TedToolkit.RoslynHelper" Version="2026.9.9" />
     <PackageVersion Include="TUnit" Version="1.63.0" />
   </ItemGroup>
 </Project>

@@ -12,13 +12,19 @@ internal static class GeneratedCode
 {
     internal static DescriptionSummary Summary(string text) => new(new DescriptionText(text));
     internal static SimpleNameExpression Name(string name) => name.ToSimpleName();
-    internal static DataType Type(ITypeSymbol symbol) => DataType.FromSymbol(symbol);
+    internal static DataType Type(ITypeSymbol symbol) => new(StepSymbols.TypeName(symbol));
     internal static DataType Runtime(Compilation compilation, string name, params ITypeSymbol[] arguments)
     {
         var type = compilation.GetTypeByMetadataName("TedToolkit.Orchestration.Pipeline." + name + (arguments.Length == 0 ? "" : "`" + arguments.Length))!;
         return Type(arguments.Length == 0 ? type : type.Construct(arguments));
     }
     internal static DataType TaskOf(ITypeSymbol? result) => result is null ? DataType.Task : DataType.TaskOf(Type(result));
+    internal static (string Name, DataType ReturnType) ExecutionSignature(
+        bool asynchronous, bool discardResults) =>
+        ((discardResults ? "ExecuteWithoutResults" : "Execute") + (asynchronous ? "Async" : ""),
+            asynchronous
+                ? discardResults ? DataType.Task : DataType.TaskOf(new DataType("Results"))
+                : discardResults ? DataType.Void : new DataType("Results"));
     internal static InvocationExpression Call(string name, params IExpression[] arguments) => Name(name).Invoke(arguments);
     internal static InvocationExpression Call(IExpression target, params IExpression[] arguments) => target.Invoke(arguments);
     internal static ObjectCreationExpression New(DataType type, params IExpression[] arguments) => type.New.AddArguments(arguments);

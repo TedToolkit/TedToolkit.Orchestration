@@ -16,13 +16,14 @@ public partial class ExecutorGeneratorTests
         using System.Threading;
         using System.Threading.Tasks;
         using Microsoft.Extensions.DependencyInjection;
+        using Microsoft.Extensions.Logging;
         using TedToolkit.Orchestration.Pipeline;
         using TedToolkit.Orchestration.Pipeline.Attributes;
 
         """;
     private const string SimpleSteps = """
         public record Inputs(int Value);
-        internal readonly ref struct AddStep(int a, int b) : IAsyncStep<int>
+        internal readonly ref partial struct AddStep(int a, int b) : IAsyncStep<int>
         {
             public Task<int> ExecuteAsync(CancellationToken token) => Task.FromResult(a + b);
         }
@@ -30,6 +31,7 @@ public partial class ExecutorGeneratorTests
     private static readonly ImmutableArray<MetadataReference> References =
         ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
         .Append(typeof(IAsyncStep<>).Assembly.Location).Append(typeof(ServiceCollection).Assembly.Location)
+        .Append(typeof(Microsoft.Extensions.Logging.ILogger).Assembly.Location)
         .Append(typeof(IServiceCollection).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
         .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path)).ToImmutableArray();
 
@@ -38,15 +40,26 @@ public partial class ExecutorGeneratorTests
     private static CSharpParseOptions ParseOptions => new CSharpParseOptions(LanguageVersion.Preview);
 
     private static async Task<GeneratedCompilation> Generate(string source, MetadataReference? additionalReference = null, string? assemblyName = null)
+        => await GenerateCore(source, assemblyName,
+            additionalReference is null ? [] : [additionalReference]);
+
+    private static async Task<GeneratedCompilation> GenerateWithReferences(
+        string source, string assemblyName, params MetadataReference[] additionalReferences)
+        => await GenerateCore(source, assemblyName, additionalReferences);
+
+    private static async Task<GeneratedCompilation> GenerateCore(
+        string source, string? assemblyName, IEnumerable<MetadataReference> additionalReferences)
     {
         var compilation = CSharpCompilation.Create(assemblyName ?? "PipelineScenario_" + Guid.NewGuid().ToString("N"),
             [CSharpSyntaxTree.ParseText(Imports + source, ParseOptions, "Scenario.cs")],
-            additionalReference is null ? References : References.Add(additionalReference),
+            References.AddRange(additionalReferences),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable, optimizationLevel: OptimizationLevel.Release));
         GeneratorDriver driver = CSharpGeneratorDriver.Create([new PipelineExecutorGenerator().AsSourceGenerator()], parseOptions: ParseOptions);
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var generated, out var generatorDiagnostics);
-        var analyzerDiagnostics = await generated.WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(new PipelineAnalyzer())).GetAnalyzerDiagnosticsAsync();
-        return new GeneratedCompilation(generated, generatorDiagnostics.AddRange(analyzerDiagnostics).AddRange(generated.GetDiagnostics()),
+        var analyzerDiagnostics = await generated.WithAnalyzers(
+            ImmutableArray.Create<DiagnosticAnalyzer>(new PipelineAnalyzer(), new GeneratedStepContextSuppressor()))
+            .GetAllDiagnosticsAsync();
+        return new GeneratedCompilation(generated, generatorDiagnostics.AddRange(analyzerDiagnostics),
             string.Join("\n", driver.GetRunResult().GeneratedTrees.Select(tree => tree.ToString())));
     }
 

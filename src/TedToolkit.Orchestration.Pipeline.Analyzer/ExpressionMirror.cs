@@ -14,16 +14,19 @@ internal sealed class ExpressionMirror : CSharpSyntaxRewriter
     private readonly SemanticModel _model;
     private readonly IMethodSymbol _configuration;
     private readonly IReadOnlyDictionary<ILocalSymbol, VariableDeclaratorSyntax> _values;
+    private readonly IReadOnlyDictionary<IParameterSymbol, string> _inputs;
     private readonly Dictionary<ILocalSymbol, string> _names = new(SymbolEqualityComparer.Default);
     private readonly HashSet<ILocalSymbol> _visited = new(SymbolEqualityComparer.Default);
     private GraphNode _node = null!;
 
     internal ExpressionMirror(SemanticModel model, MethodDeclarationSyntax configuration,
-        IReadOnlyDictionary<ILocalSymbol, VariableDeclaratorSyntax> values)
+        IReadOnlyDictionary<ILocalSymbol, VariableDeclaratorSyntax> values,
+        IReadOnlyDictionary<IParameterSymbol, string>? inputs = null)
     {
         _model = model;
         _configuration = (IMethodSymbol)model.GetDeclaredSymbol(configuration)!;
         _values = values;
+        _inputs = inputs ?? new Dictionary<IParameterSymbol, string>(SymbolEqualityComparer.Default);
         foreach (var local in values.OrderBy(item => item.Value.SpanStart)) _names.Add(local.Key, "__local" + _names.Count);
     }
 
@@ -56,6 +59,9 @@ internal sealed class ExpressionMirror : CSharpSyntaxRewriter
 
     private SyntaxNode? RewriteName(SimpleNameSyntax node)
     {
+        if (_model.GetSymbolInfo(node).Symbol is IParameterSymbol rootParameter &&
+            _inputs.TryGetValue(rootParameter, out var inputName))
+            return SyntaxFactory.IdentifierName(inputName);
         if (node.Parent is MemberAccessExpressionSyntax member && member.Name == node ||
             node.Parent is MemberBindingExpressionSyntax || node.Parent is QualifiedNameSyntax qualified && qualified.Right == node ||
             node.Parent is AliasQualifiedNameSyntax || node.Parent is NameColonSyntax or NameEqualsSyntax ||

@@ -11,9 +11,10 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
 {
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-        ImmutableArray.Create(PipelineDiagnostics.StepMustBeInternal, PipelineDiagnostics.InvalidContract,
+        ImmutableArray.Create(PipelineDiagnostics.StaticGraph, PipelineDiagnostics.StepMustBeInternal,
+            PipelineDiagnostics.InvalidContract,
             PipelineDiagnostics.FactoryOutsideConfiguration, PipelineDiagnostics.ConfigurationInvocation,
-            PipelineDiagnostics.PolicyBypassed);
+            PipelineDiagnostics.ModifierOutsideConfiguration);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -31,7 +32,15 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeStep(SymbolAnalysisContext context)
     {
         var type = (INamedTypeSymbol)context.Symbol;
-        if (!StepSymbols.IsStep(type, context.Compilation)) return;
+        if (StepContextEmitter.HasAttribute(type, StepContextEmitter.CompositeAttributeName))
+        {
+            var compositeReason = CompositeStepGenerator.ContractError(type, context.Compilation);
+            if (compositeReason is not null)
+                context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StaticGraph,
+                    type.Locations[0], compositeReason));
+            return;
+        }
+        if (!StepSymbols.IsLeafStep(type, context.Compilation)) return;
         if (type.DeclaredAccessibility != Accessibility.Internal || type.IsFileLocal)
             context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StepMustBeInternal, type.Locations[0], type.Name));
         var reason = StepSymbols.InvalidContract(type, context.Compilation);
@@ -43,7 +52,7 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
     {
         var invocation = (IInvocationOperation)context.Operation;
         var method = invocation.TargetMethod;
-        if (PipelineSymbols.IsConfiguration(method, context.Compilation))
+        if (PipelineSymbols.IsCompositeConfiguration(method, context.Compilation))
         {
             context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.ConfigurationInvocation,
                 invocation.Syntax.GetLocation(), method.Name));
@@ -52,20 +61,18 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
         if (PipelineSymbols.IsStepFactory(method, context.Compilation))
         {
             if (context.ContainingSymbol is not IMethodSymbol caller ||
-                !PipelineSymbols.IsConfiguration(caller, context.Compilation))
+                !PipelineSymbols.IsCompositeConfiguration(caller, context.Compilation))
                 context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.FactoryOutsideConfiguration,
                     invocation.Syntax.GetLocation(), method.Name));
             return;
         }
-        if (method.Name is not ("Execute" or "ExecuteAsync") ||
-            !StepSymbols.IsStep(method.ContainingType, context.Compilation)) return;
-        var policy = StepSymbols.Policy(method.ContainingType);
-        if (policy.RetryCount == 0 && policy.TimeoutMilliseconds == -1) return;
-        var contract = StepSymbols.Contracts(method.ContainingType, context.Compilation);
-        if (contract.Length != 1) return;
-        foreach (var member in contract[0].GetMembers())
-            if (SymbolEqualityComparer.Default.Equals(method.ContainingType.FindImplementationForInterfaceMember(member), method))
-                context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.PolicyBypassed,
-                    invocation.Syntax.GetLocation(), method.ContainingType.Name));
+        if (PipelineSymbols.IsStepModifier(method, context.Compilation))
+        {
+            if (context.ContainingSymbol is not IMethodSymbol caller ||
+                !PipelineSymbols.IsCompositeConfiguration(caller, context.Compilation))
+                context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.ModifierOutsideConfiguration,
+                    invocation.Syntax.GetLocation(), method.Name));
+            return;
+        }
     }
 }

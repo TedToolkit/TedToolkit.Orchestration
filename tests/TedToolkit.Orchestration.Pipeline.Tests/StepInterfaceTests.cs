@@ -17,22 +17,21 @@ public partial class ExecutorGeneratorTests
     }
 
     [Test]
-    [Arguments("RetryCount = -1")]
-    [Arguments("TimeoutMilliseconds = 0")]
-    [Arguments("TimeoutMilliseconds = -2")]
-    public async Task InvalidPoliciesAreRejectedAtCompileTime(string policy)
-    {
-        var generated = await Generate("[StepPolicy(" + policy + ")] internal readonly ref struct Bad : IStep { public void Execute(CancellationToken token) {} }");
-        await Assert.That(generated.Diagnostics.Any(d => d.Id == "TTP013")).IsTrue();
-    }
-
-    [Test]
     public async Task RefStructStepsCannotBeBoxedAsTheirInterface()
     {
         var generated = await Generate("""
-            internal readonly ref struct Node : IAsyncStep<int> { public Task<int> ExecuteAsync(CancellationToken token) => Task.FromResult(1); }
+            internal readonly ref partial struct Node : IAsyncStep<int> { public Task<int> ExecuteAsync(CancellationToken token) => Task.FromResult(1); }
             """ + Scenario("IAsyncStep<int> boxed = new Node(); return Task.FromResult(string.Empty);"));
         await Assert.That(generated.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error && d.Id.StartsWith("CS"))).IsTrue();
+    }
+
+    [Test]
+    [Arguments("internal readonly ref partial struct Bad(Span<int> value) : IStep { public void Execute(CancellationToken token) {} }")]
+    [Arguments("internal readonly ref partial struct Bad : IStep { public Bad(int value) {} public Bad() {} public void Execute(CancellationToken token) {} }")]
+    public async Task UnsupportedStepConstructorsAreRejected(string declaration)
+    {
+        var generated = await Generate(declaration);
+        await Assert.That(generated.Diagnostics.Any(d => d.Id == "TTP013")).IsTrue();
     }
 }
 

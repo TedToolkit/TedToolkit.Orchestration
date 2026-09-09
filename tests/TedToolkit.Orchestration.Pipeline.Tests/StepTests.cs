@@ -305,21 +305,20 @@ public class StepTests
             _execute = execute;
             var milliseconds = timeout is null ? -1 : checked((int)timeout.Value.TotalMilliseconds);
             _run = ExecutorGeneratorTests.Compile<Func<Func<CancellationToken, Task<int>>, CancellationToken, Task<int>>>($$"""
-                [StepPolicy(RetryCount = {{retries}}, TimeoutMilliseconds = {{milliseconds}})]
-                internal readonly ref struct PolicyStep(Func<CancellationToken, Task<int>> operation) : IAsyncStep<int>
+                internal readonly ref partial struct PolicyStep(Func<CancellationToken, Task<int>> operation) : IAsyncStep<int>
                 {
                     public Task<int> ExecuteAsync(CancellationToken token) => operation(token);
                 }
-                public partial class PolicyPipeline : global::TedToolkit.Orchestration.Pipeline.Pipeline
+                [CompositeStep]
+                public readonly ref partial struct PolicyPipeline(Func<CancellationToken, Task<int>> operation)
                 {
-                    private void Configure(Builder pipeline) { var node = pipeline.PolicyStep(); }
+                    private void Configuration(StepGraph pipeline) { var node = pipeline.PolicyStep(operation).WithRetry({{retries}}).WithTimeout({{milliseconds}}); }
                 }
                 public static class Scenario
                 {
-                    private sealed class Services : IServiceProvider { public object? GetService(Type type) => null; }
                     public static async Task<int> Run(Func<CancellationToken, Task<int>> operation, CancellationToken token)
                     {
-                        var results = await new PolicyPipeline(new Services()).ExecuteAsync(operation, token);
+                        var results = await new PolicyPipeline.Pipeline().ExecuteAsync(operation, token);
                         return results.Node;
                     }
                 }
@@ -331,5 +330,4 @@ public class StepTests
         public async Task<int> ExecuteWithPolicyAsync(CancellationToken token = default) => await (await _run)(_execute, token);
     }
 }
-
 

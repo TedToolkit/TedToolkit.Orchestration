@@ -36,8 +36,7 @@ public partial class ExecutorGeneratorTests
                 public int Attempts;
                 public InvalidOperationException Last = null!;
             }
-            [StepPolicy(RetryCount = 2)]
-            internal readonly ref struct Fail(State state) : CONTRACT
+            internal readonly ref partial struct Fail(State state) : CONTRACT
             {
                 METHOD
                 {
@@ -45,23 +44,20 @@ public partial class ExecutorGeneratorTests
                     FAILURE
                 }
             }
-            public sealed partial class Example : Pipeline
-            {
-                private void Configure(Builder pipeline, State state) { pipeline.Fail(state); }
-            }
+            [CompositeStep] public readonly ref partial struct Example(State state) { private void Configuration(StepGraph pipeline) { pipeline.Fail(state).WithRetry(2); } }
             """.Replace("CONTRACT", contract).Replace("METHOD", method).Replace("FAILURE", failure);
 
         var body = """
             using var services = new ServiceCollection().BuildServiceProvider();
             var state = new State();
-            var pipeline = new Example(services, state);
+            var pipeline = new Example.Pipeline();
             try { INVOCATION; return SUCCESS; }
             catch (InvalidOperationException exception)
             {
                 return RESULT;
             }
             """
-            .Replace("INVOCATION", (asynchronous ? "await " : "") + "pipeline." + execute + "()")
+            .Replace("INVOCATION", (asynchronous ? "await " : "") + "pipeline." + execute + "(state)")
             .Replace("SUCCESS", asynchronous ? "\"success\"" : "Task.FromResult(\"success\")")
             .Replace("RESULT", asynchronous
                 ? "$\"{ReferenceEquals(exception, state.Last)}:{state.Attempts}:{exception.Message}\""
@@ -81,8 +77,7 @@ public partial class ExecutorGeneratorTests
                 public int Cleaned;
                 public InvalidOperationException Last = null!;
             }
-            [StepPolicy(RetryCount = 2)]
-            internal readonly ref struct Fail(State state) : IAsyncStep<int>
+            internal readonly ref partial struct Fail(State state) : IAsyncStep<int>
             {
                 public Task<int> ExecuteAsync(CancellationToken token)
                 {
@@ -90,7 +85,7 @@ public partial class ExecutorGeneratorTests
                     return Task.FromException<int>(state.Last);
                 }
             }
-            internal readonly ref struct Wait(State state) : IAsyncStep<int>
+            internal readonly ref partial struct Wait(State state) : IAsyncStep<int>
             {
                 public Task<int> ExecuteAsync(CancellationToken token) => RunAsync(state, token);
                 private static async Task<int> RunAsync(State state, CancellationToken token)
@@ -99,18 +94,18 @@ public partial class ExecutorGeneratorTests
                     finally { state.Cleaned++; }
                 }
             }
-            public sealed partial class Example : Pipeline
+            [CompositeStep]
+            public readonly ref partial struct Example(State state)
             {
-                private void Configure(Builder pipeline, State state)
+                private void Configuration(StepGraph pipeline)
                 {
                     var wait = pipeline.Wait(state);
-                    var fail = pipeline.Fail(state);
+                    var fail = pipeline.Fail(state).WithRetry(2);
                 }
             }
             """ + AsyncScenario("""
-                using var services = new ServiceCollection().BuildServiceProvider();
                 var state = new State();
-                try { await new Example(services, state).ExecuteAsync(); return "success"; }
+                try { await new Example.Pipeline().ExecuteAsync(state); return "success"; }
                 catch (InvalidOperationException exception)
                 {
                     return $"{ReferenceEquals(exception, state.Last)}:{state.Attempts}:{state.Cleaned}";
