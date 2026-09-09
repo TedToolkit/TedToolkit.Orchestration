@@ -3,29 +3,34 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TedToolkit.Orchestration.Pipeline;
 using TedToolkit.Orchestration.Pipeline.Attributes;
+using TedToolkit.Orchestration.StateMachine;
 
-var services = new ServiceCollection()
-    .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
-    .AddSingleton<IOffset, Offset>()
-    .BuildServiceProvider();
+public static class Program
+{
+    public static async Task Main()
+    {
+        using var services = new ServiceCollection()
+            .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
+            .AddSingleton<IOffset, Offset>()
+            .BuildServiceProvider();
 
-var result = new Root.Pipeline(services).Execute(40);
-if (result.Inner.Adjusted != 42)
-    throw new InvalidOperationException("Package consumer produced an unexpected result.");
+        var result = new Root.Pipeline(services).Execute(40);
+        var machine = new OrderMachine();
+        await machine.CompleteAsync();
+        if (result.Inner.Adjusted != 42 || machine.State != OrderState.Completed)
+            throw new InvalidOperationException("Package consumer produced an unexpected result.");
 
-Console.WriteLine(result.Inner.Adjusted);
+        Console.WriteLine($"{result.Inner.Adjusted}:{machine.State}");
+    }
+}
 
-/// <summary>Supplies an offset to the package-consumer Step.</summary>
 public interface IOffset
 {
-    /// <summary>Gets the offset.</summary>
     int Value { get; }
 }
 
-/// <summary>Default offset service.</summary>
 public sealed class Offset : IOffset
 {
-    /// <inheritdoc />
     public int Value => 2;
 }
 
@@ -41,8 +46,6 @@ internal readonly ref partial struct AddOffset(
     }
 }
 
-/// <summary>Adds the injected offset.</summary>
-/// <param name="value">The input value.</param>
 [CompositeStep]
 public readonly ref partial struct Inner(int value)
 {
@@ -52,8 +55,6 @@ public readonly ref partial struct Inner(int value)
     }
 }
 
-/// <summary>Exercises a public nested Composite from a package consumer.</summary>
-/// <param name="value">The input value.</param>
 [CompositeStep]
 public readonly ref partial struct Root(int value)
 {
@@ -61,4 +62,17 @@ public readonly ref partial struct Root(int value)
     {
         var inner = steps.Inner(value);
     }
+}
+
+public enum OrderState
+{
+    Draft,
+    Completed,
+}
+
+[StateMachine<OrderState>(OrderState.Draft)]
+public sealed partial class OrderMachine
+{
+    [TransitionTo(OrderState.Completed, OrderState.Draft)]
+    public partial ValueTask CompleteAsync();
 }

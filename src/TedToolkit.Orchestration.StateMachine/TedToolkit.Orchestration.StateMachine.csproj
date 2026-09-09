@@ -1,16 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <Import Project="../../externals/TedToolkit/props/NugetPackage.props" />
+  <Import Project="../../externals/TedToolkit/props/AlmostAllFrameworks.props" />
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <IsTrimmable>true</IsTrimmable>
+    <IsTrimmable Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net6.0'))">true</IsTrimmable>
     <Description>Compile-time state machine orchestration library.</Description>
     <PackageLicenseExpression>LGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="System.Threading.Tasks.Extensions"
+                      Condition="'$(TargetFramework)' == 'net472' Or '$(TargetFramework)' == 'net48'" />
     <ProjectReference Include="../TedToolkit.Orchestration.StateMachine.Analyzer/TedToolkit.Orchestration.StateMachine.Analyzer.csproj"
-                      OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      PrivateAssets="all" />
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <None Remove="README.md" />

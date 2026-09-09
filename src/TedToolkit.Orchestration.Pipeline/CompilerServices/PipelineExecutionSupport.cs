@@ -12,7 +12,7 @@ public static class PipelineExecutionSupport
     public static Task<T> ObserveStepAsync<T>(Task<T> operation, CancellationToken token)
     {
         if (!token.CanBeCanceled) return operation;
-        if (operation.IsCompletedSuccessfully)
+        if (CompletedSuccessfully(operation))
         {
             token.ThrowIfCancellationRequested();
             return operation;
@@ -27,7 +27,7 @@ public static class PipelineExecutionSupport
     public static Task ObserveStepAsync(Task operation, CancellationToken token)
     {
         if (!token.CanBeCanceled) return operation;
-        if (operation.IsCompletedSuccessfully)
+        if (CompletedSuccessfully(operation))
         {
             token.ThrowIfCancellationRequested();
             return operation;
@@ -62,6 +62,36 @@ public static class PipelineExecutionSupport
             token.ThrowIfCancellationRequested();
             throw;
         }
+    }
+
+    /// <summary>Throws when a generated Pipeline receives a null required argument.</summary>
+    /// <param name="value">The argument value.</param>
+    /// <param name="parameterName">The generated parameter name.</param>
+    public static void ThrowIfNull(object? value, string parameterName)
+    {
+        if (value is null) throw new ArgumentNullException(parameterName);
+    }
+
+    /// <summary>Cancels sibling work after a generated parallel branch fails.</summary>
+    /// <param name="cancellation">The shared execution cancellation source.</param>
+    /// <returns>An operation that completes after cancellation callbacks finish.</returns>
+    public static Task CancelExecutionAsync(CancellationTokenSource cancellation)
+    {
+#if NET8_0_OR_GREATER
+        return cancellation.CancelAsync();
+#else
+        cancellation.Cancel();
+        return Task.CompletedTask;
+#endif
+    }
+
+    private static bool CompletedSuccessfully(Task operation)
+    {
+#if NETSTANDARD2_0 || NET472 || NET48
+        return operation.Status == TaskStatus.RanToCompletion;
+#else
+        return operation.IsCompletedSuccessfully;
+#endif
     }
 
     /// <summary>Owns retry state and timeout resources for successive Step attempts.</summary>

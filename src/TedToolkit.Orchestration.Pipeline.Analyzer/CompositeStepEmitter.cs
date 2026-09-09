@@ -59,7 +59,9 @@ internal static class CompositeStepEmitter
         method.AddParameter(new Parameter(typeof(System.Threading.CancellationToken), "cancellationToken")
             .AddDefault(SimpleNameExpression.Default));
         if (requiresServices)
-            method.AddStatement(Call("global::System.ArgumentNullException.ThrowIfNull", Name(providerName)));
+            method.AddStatement(Call(
+                "global::TedToolkit.Orchestration.Pipeline.CompilerServices.PipelineExecutionSupport.ThrowIfNull",
+                Name(providerName), providerName.ToLiteral()));
         var arguments = new List<IExpression>();
         if (requiresServices)
             arguments.Add(Name(providerName));
@@ -82,7 +84,9 @@ internal static class CompositeStepEmitter
             facade.AddMember(new Constructor().Public
                 .AddRootDescription(Summary("Creates a root facade using the supplied service provider."))
                 .AddParameter(new Parameter(typeof(IServiceProvider), "services"))
-                .AddStatement(Call("global::System.ArgumentNullException.ThrowIfNull", Name("services")))
+                .AddStatement(Call(
+                    "global::TedToolkit.Orchestration.Pipeline.CompilerServices.PipelineExecutionSupport.ThrowIfNull",
+                    Name("services"), "services".ToLiteral()))
                 .AddStatement(Name("_services").Assign(Name("services"))));
         }
 

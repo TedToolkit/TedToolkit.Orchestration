@@ -1,10 +1,12 @@
 # TedToolkit.Orchestration
 
-Strongly typed, compile-time orchestration for .NET 10. The repository contains two independent libraries: **Pipeline** generates execution code for a static dependency graph, while **StateMachine** generates enum-state routing, guards, lifecycle callbacks, and transition notifications.
+Strongly typed, compile-time orchestration for .NET. The repository contains two independent libraries: **Pipeline** generates execution code for a static dependency graph, while **StateMachine** generates enum-state routing, guards, lifecycle callbacks, and transition notifications.
 
 [![Build](https://github.com/TedToolkit/TedToolkit.Orchestration/actions/workflows/build.yml/badge.svg?branch=development)](https://github.com/TedToolkit/TedToolkit.Orchestration/actions/workflows/build.yml)
 
 Both runtime packages include their matching analyzer and source generator. Consumers write declarations; the compiler validates them and emits direct, typed execution code.
+
+Both packages target .NET Standard 2.0, .NET Standard 2.1, .NET Framework 4.7.2 and 4.8, and .NET 6 through .NET 10.
 
 ## Choose a package
 
@@ -50,7 +52,7 @@ The benchmark adapters compare only matched micro-workloads. They do not erase d
 
 ## Quick start: Pipeline
 
-Add `TedToolkit.Orchestration.Pipeline` from the feed that contains your build. The package targets .NET 10 and brings its analyzer with it. Add `Microsoft.Extensions.DependencyInjection` when using Microsoft's container.
+Add `TedToolkit.Orchestration.Pipeline` from the feed that contains your build. The package supports the framework matrix above and brings its analyzer with it. Add `Microsoft.Extensions.DependencyInjection` when using Microsoft's container.
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;

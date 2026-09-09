@@ -97,7 +97,7 @@ internal static class StepExecutionEmitter
             guard.Statements.AddRange(method.Statements);
             method.Statements.Clear();
             var cancellation = new TryStatement();
-            cancellation.AddStatement(Await(Call("__execution.CancelAsync")));
+            cancellation.AddStatement(Await(Call(SupportType + ".CancelExecutionAsync", Name("__execution"))));
             cancellation.AddCatch(new CatchClause(typeof(System.Exception)));
             guard.AddCatch(new CatchClause(typeof(System.Exception))
                 .AddStatement(cancellation).AddStatement(new ThrowExpression()));
