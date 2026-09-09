@@ -103,7 +103,41 @@ public partial class ExecutorGeneratorTests
     }
 
     [Test]
-    public async Task ConcurrentInvocationsKeepUnboundParametersAndResultsSeparate()
+    public async Task CancellationCallbackFailureDoesNotReplaceStepFailure()
+    {
+        var result = await Run(NamedSteps + ConcurrentSteps + """
+            [CompositeStep]
+            public readonly ref partial struct Example(
+                Func<CancellationToken, Task<int>> slowWork,
+                Func<CancellationToken, Task<int>> failWork)
+            {
+                private void Configuration(StepGraph p)
+                {
+                    var slow = p.Start(slowWork); var fail = p.Start(failWork); p.Add(slow, fail);
+                }
+            }
+            """ + AsyncScenario("""
+                var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var expected = new InvalidOperationException("primary");
+                var callbackFailure = new InvalidOperationException("callback");
+                var execution = new Example.Pipeline().ExecuteAsync(
+                    slowWork: async token =>
+                    {
+                        using var registration = token.Register(() => throw callbackFailure);
+                        started.SetResult();
+                        await Task.Delay(-1, token);
+                        return 1;
+                    },
+                    failWork: async token => { await started.Task; throw expected; });
+                try { await execution; return "unexpected"; }
+                catch (Exception actual) { return $"{ReferenceEquals(actual, expected)}:{ReferenceEquals(actual, callbackFailure)}"; }
+                """));
+
+        await Assert.That(result).IsEqualTo("True:False");
+    }
+
+    [Test]
+    public async Task ConcurrentInvocationsKeepInputsAndResultsSeparate()
     {
         var result = await Run(ConcurrentSteps + """
             [CompositeStep]

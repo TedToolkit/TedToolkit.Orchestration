@@ -4,19 +4,6 @@ namespace TedToolkit.Orchestration.Pipeline.CompilerServices;
 [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
 public static class PipelineExecutionSupport
 {
-    /// <summary>Cancels and observes the remaining work without replacing the primary failure.</summary>
-    /// <param name="cancellation">The invocation cancellation source.</param>
-    public static async Task CancelRemainingAsync(CancellationTokenSource cancellation)
-    {
-        try
-        {
-            await cancellation.CancelAsync().ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-        }
-    }
-
     /// <summary>Observes a result-bearing operation against the invocation cancellation boundary.</summary>
     /// <typeparam name="T">The operation result type.</typeparam>
     /// <param name="operation">The operation to observe.</param>

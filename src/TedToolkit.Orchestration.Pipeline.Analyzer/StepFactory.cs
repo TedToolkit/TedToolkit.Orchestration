@@ -27,7 +27,7 @@ internal sealed class StepFactory
         HasContext = type.GetMembers("DisplayName").OfType<IPropertySymbol>().Any(property => property.IsRequired);
         RequiresServices = HasLogger || constructor.Parameters.Any(StepSymbols.IsService);
         Parameters = constructor.Parameters.Where(p => !StepSymbols.IsService(p)).ToArray();
-        ExtensionTypeName = type.Name + "Extensions";
+        ExtensionTypeName = GeneratedNames.ExtensionTypeName(type);
     }
 
     internal INamedTypeSymbol Type { get; }
@@ -44,7 +44,8 @@ internal sealed class StepFactory
     internal Method CreateMethod(Compilation compilation)
     {
         var handle = Result is null ? GeneratedCode.Type(compilation.GetTypeByMetadataName(StepSymbols.VoidBuilderName)!) : Runtime(compilation, "StepBuilder", Result);
-        var method = new Method(Type.Name, new ReturnType(handle)).Public.AddRootDescription(Summary("Declares a step for the generator; omitted arguments become execution parameters."));
+        var method = new Method(Type.Name, new ReturnType(handle)).Public
+            .AddRootDescription(Summary("Declares a step and binds its data inputs for the generator."));
         foreach (var parameter in Parameters)
         {
             var argument = new Parameter(Runtime(compilation, "StepArgument", parameter.Type), parameter.Name);
@@ -54,7 +55,7 @@ internal sealed class StepFactory
     }
     internal StepFactory Rebind(Compilation compilation)
     {
-        var type = compilation.GetTypeByMetadataName(Type.ToDisplayString())!;
+        var type = compilation.GetTypeByMetadataName(GeneratedNames.MetadataName(Type))!;
         var constructor = type.InstanceConstructors.Single(candidate =>
             candidate.Parameters.Length == Constructor.Parameters.Length &&
             candidate.IsImplicitlyDeclared == Constructor.IsImplicitlyDeclared);
@@ -104,26 +105,20 @@ internal sealed class StepFactory
 
     private static void AssignExtensionTypeNames(IReadOnlyList<StepFactory> factories)
     {
-        foreach (var group in factories.GroupBy(factory => factory.Type.Name, StringComparer.Ordinal)
-            .Where(group => group.Count() > 1))
-        {
-            foreach (var factory in group)
-                factory.ExtensionTypeName = Identifier(
-                    factory.Type.ContainingNamespace.IsGlobalNamespace
-                        ? "Global_" + factory.Type.Name + "Extensions"
-                        : factory.Type.ContainingNamespace.ToDisplayString() + "_" +
-                          factory.Type.Name + "Extensions");
-
-            foreach (var collision in group.GroupBy(factory => factory.ExtensionTypeName, StringComparer.Ordinal)
-                .Where(collision => collision.Count() > 1))
-                foreach (var factory in collision)
-                    factory.ExtensionTypeName = Identifier(
-                        factory.Type.ContainingAssembly.Identity.Name + "_" + factory.ExtensionTypeName);
-        }
+        foreach (var factory in Collisions(factories))
+            factory.ExtensionTypeName = GeneratedNames.ExtensionTypeName(
+                factory.Type, includeNamespace: true);
+        foreach (var factory in Collisions(factories))
+            factory.ExtensionTypeName = GeneratedNames.ExtensionTypeName(
+                factory.Type, includeNamespace: true, includeAssembly: true);
+        foreach (var factory in Collisions(factories))
+            factory.ExtensionTypeName = GeneratedNames.DisambiguateIdentifier(
+                factory.ExtensionTypeName, factory.Type);
     }
 
-    private static string Identifier(string value) =>
-        new(value.Select(character => char.IsLetterOrDigit(character) ? character : '_').ToArray());
+    private static IEnumerable<StepFactory> Collisions(IReadOnlyList<StepFactory> factories) =>
+        factories.GroupBy(factory => factory.ExtensionTypeName, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1).SelectMany(group => group);
 
     internal static IEnumerable<INamedTypeSymbol> Types(INamespaceOrTypeSymbol container)
     {

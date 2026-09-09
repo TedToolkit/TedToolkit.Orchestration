@@ -16,21 +16,19 @@ internal sealed class GraphReader
     private readonly SemanticModel _model;
     private readonly MethodDeclarationSyntax _configure;
     private readonly IReadOnlyList<StepFactory> _factories;
-    private readonly bool _allowUnbound;
     private readonly IReadOnlyDictionary<IParameterSymbol, string> _inputs;
     private readonly Dictionary<ILocalSymbol, GraphNode> _locals = new(SymbolEqualityComparer.Default);
     private readonly List<GraphNode> _nodes = new();
     private readonly Dictionary<ILocalSymbol, VariableDeclaratorSyntax> _values = new(SymbolEqualityComparer.Default);
     private bool _failed;
     internal GraphReader(SourceProductionContext context, Compilation compilation, MethodDeclarationSyntax configure,
-        IReadOnlyList<StepFactory> factories, bool allowUnbound = true,
+        IReadOnlyList<StepFactory> factories,
         IReadOnlyDictionary<IParameterSymbol, string>? inputs = null)
     {
         _context = context;
         _model = compilation.GetSemanticModel(configure.SyntaxTree);
         _configure = configure;
         _factories = factories;
-        _allowUnbound = allowUnbound;
         _inputs = inputs ?? new Dictionary<IParameterSymbol, string>(SymbolEqualityComparer.Default);
     }
 
@@ -231,19 +229,9 @@ internal sealed class GraphReader
 
     private void AssignNames()
     {
-        var names = new HashSet<string>(StringComparer.Ordinal);
         var resultNames = new HashSet<string>(StringComparer.Ordinal) { "Results" };
         foreach (var node in _nodes)
-        {
             if (node.Factory.Result is not null && !resultNames.Add(node.ResultName)) Fail(_configure, "result names collide; give the nodes distinct names");
-            for (var i = 0; i < node.Arguments.Count; i++)
-                if (node.Arguments[i].Unbound)
-                {
-                    var name = char.ToLowerInvariant(node.Name[0]) + node.Name.Substring(1) + Capitalize(node.Factory.Parameters[i].Name);
-                    if (!names.Add(name) || name == "cancellationToken" || ReservedNames.Contains(name)) Fail(_configure, "execution parameter names collide; rename the nodes");
-                    node.Arguments[i].InputName = name;
-                }
-        }
     }
 
     private static bool IsFactory(IInvocationOperation invocation, ITypeSymbol builder) =>
@@ -256,9 +244,8 @@ internal sealed class GraphReader
         while (value is IConversionOperation conversion) value = conversion.Operand;
         if (argument.ArgumentKind == ArgumentKind.DefaultValue || value is IDefaultValueOperation && SymbolEqualityComparer.Default.Equals(value.Type, argument.Parameter!.Type))
         {
-            if (!_allowUnbound)
-                Fail(argument.Syntax, "Composite Step registrations must bind every data input");
-            return new NodeArgument { Unbound = true };
+            Fail(argument.Syntax, "Composite Step registrations must bind every data input");
+            return new NodeArgument();
         }
         if (value is ILocalReferenceOperation local && _locals.TryGetValue(local.Local, out var node))
         {
@@ -272,7 +259,7 @@ internal sealed class GraphReader
         var type = value.Type as INamedTypeSymbol;
         if (type is not null && (SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.BuilderName)) ||
             SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.ArgumentName))))
-            Fail(argument.Syntax, "bindings must be a fixed value, an omitted argument, or a previously declared node");
+            Fail(argument.Syntax, "bindings must be a fixed value or a previously declared node");
         var expression = argument.Syntax is ArgumentSyntax syntax ? syntax.Expression : (ExpressionSyntax)argument.Value.Syntax;
         while (_model.GetTypeInfo(expression).Type is INamedTypeSymbol expressionType &&
             SymbolEqualityComparer.Default.Equals(expressionType.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.ArgumentName)))
@@ -283,7 +270,6 @@ internal sealed class GraphReader
         }
         return new NodeArgument { Syntax = expression, IsConstant = _model.GetConstantValue(expression).HasValue };
     }
-    private static readonly string[] ReservedNames = { "executionToken", "cancellation", "failure" };
     internal static string Capitalize(string value) => char.ToUpperInvariant(value[0]) + value.Substring(1);
     private void Fail(SyntaxNode syntax, string reason)
     { _failed = true; _context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StaticGraph, syntax.GetLocation(), reason)); }
@@ -295,8 +281,6 @@ internal sealed class NodeArgument
     internal ExpressionSyntax? Syntax { get; set; }
     internal TedToolkit.RoslynHelper.IExpression? Expression { get; set; }
     internal GraphNode? Source { get; set; }
-    internal bool Unbound { get; set; }
-    internal string InputName { get; set; } = "";
 }
 internal sealed class GraphNode
 {

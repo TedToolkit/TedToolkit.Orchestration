@@ -172,6 +172,67 @@ public partial class ExecutorGeneratorTests
     }
 
     [Test]
+    public async Task GeneratedFactoryNamesPreserveNamespaceSegmentIdentity()
+    {
+        var value = await Run("""
+            namespace A_B
+            {
+                internal readonly ref partial struct Increment(int value) : IStep<int>
+                {
+                    public int Execute(CancellationToken token) => value + 1;
+                }
+            }
+            namespace A.B
+            {
+                internal readonly ref partial struct Increment(int value) : IStep<int>
+                {
+                    public int Execute(CancellationToken token) => value + 2;
+                }
+            }
+            [CompositeStep]
+            public readonly ref partial struct Both(int value)
+            {
+                private void Configuration(StepGraph steps)
+                {
+                    var first = A__B_IncrementExtensions.Increment(steps, value);
+                    var second = A_B_IncrementExtensions.Increment(steps, value);
+                }
+            }
+            public static class Scenario
+            {
+                public static Task<string> Run()
+                {
+                    var result = new Both.Pipeline().Execute(1);
+                    return Task.FromResult($"{result.First}:{result.Second}");
+                }
+            }
+            """);
+
+        await Assert.That(value).IsEqualTo("2:3");
+    }
+
+    [Test]
+    public async Task CompositeDependencyCyclesAreRejected()
+    {
+        var generated = await Generate("""
+            [CompositeStep]
+            public readonly ref partial struct First
+            {
+                private void Configuration(StepGraph steps) { steps.Second(); }
+            }
+            [CompositeStep]
+            public readonly ref partial struct Second
+            {
+                private void Configuration(StepGraph steps) { steps.First(); }
+            }
+            """);
+
+        await Assert.That(generated.Diagnostics.Any(diagnostic =>
+            diagnostic.Id == "TTP009" &&
+            diagnostic.GetMessage().Contains("dependency cycle", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
     public async Task SameNamedPublicCompositesFromDifferentAssembliesCanBeSelectedExactly()
     {
         var alpha = await Generate("""
@@ -412,6 +473,49 @@ public partial class ExecutorGeneratorTests
             """);
 
         await Assert.That(value).IsEqualTo("first:second");
+    }
+
+    [Test]
+    public async Task GeneratedContextHintNamesAreReadableAndDisambiguateOnlyRealCollisions()
+    {
+        var generated = await Generate("""
+            namespace A_B
+            {
+                internal readonly ref partial struct C : IStep { public void Execute(CancellationToken token) { } }
+            }
+            namespace A
+            {
+                internal readonly ref partial struct B_C : IStep { public void Execute(CancellationToken token) { } }
+            }
+            namespace Demo
+            {
+                internal readonly ref partial struct e : IStep { public void Execute(CancellationToken token) { } }
+                internal readonly ref partial struct e\u0301 : IStep { public void Execute(CancellationToken token) { } }
+            }
+            namespace @class
+            {
+                [CompositeStep]
+                public readonly ref partial struct @event
+                {
+                    private void Configuration(StepGraph steps) { }
+                }
+            }
+            """);
+        await NoErrors(generated);
+
+        var hintNames = generated.Compilation.SyntaxTrees
+            .Select(tree => Path.GetFileName(tree.FilePath))
+            .Where(path => path.EndsWith(".StepContext.g.cs", StringComparison.Ordinal))
+            .ToArray();
+
+        await Assert.That(hintNames.Length).IsEqualTo(5);
+        await Assert.That(hintNames.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(5);
+        await Assert.That(hintNames).Contains("A_B.C.StepContext.g.cs");
+        await Assert.That(hintNames).Contains("A.B_C.StepContext.g.cs");
+        await Assert.That(hintNames).Contains("class.event.StepContext.g.cs");
+        await Assert.That(hintNames.Count(name => name.StartsWith("Demo.e", StringComparison.Ordinal))).IsEqualTo(2);
+        await Assert.That(hintNames.Any(name => System.Text.RegularExpressions.Regex.IsMatch(
+            name, @"\.[0-9a-f]{64}\.StepContext\.g\.cs$"))).IsFalse();
     }
 
     [Test]

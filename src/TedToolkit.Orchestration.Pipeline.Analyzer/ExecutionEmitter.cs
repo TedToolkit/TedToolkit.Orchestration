@@ -17,13 +17,10 @@ internal static class ExecutionEmitter
         rootInputs ??= Array.Empty<IParameterSymbol>();
         var asynchronous = nodes.Any(node => !node.Factory.IsSynchronous);
         var parallel = ExecutionPlan.IsParallel(nodes);
-        var resultType = asynchronous
-            ? discardResults ? DataType.Task : DataType.TaskOf(new DataType("Results"))
-            : discardResults ? DataType.Void : new DataType("Results");
-        var name = (discardResults ? "ExecuteWithoutResults" : "Execute") +
-            (asynchronous ? "Async" : "") +
+        var signature = ExecutionSignature(asynchronous, discardResults);
+        var name = signature.Name +
             (staticCore ? nestedCore ? "NestedCore" : "Core" : "");
-        var method = new Method(name, new ReturnType(resultType))
+        var method = new Method(name, new ReturnType(signature.ReturnType))
             .AddRootDescription(Summary(discardResults
                 ? "Executes all configured steps without collecting results."
                 : "Executes configured steps and returns their typed results."));
@@ -36,14 +33,7 @@ internal static class ExecutionEmitter
                 method.AddParameter(new Parameter(Type(rootInputs[index].Type), "__root" + index));
         }
         else
-        {
             _ = method.Public;
-            foreach (var node in nodes)
-                for (var index = 0; index < node.Arguments.Count; index++)
-                    if (node.Arguments[index].Unbound)
-                        method.AddParameter(new Parameter(
-                            Type(node.Factory.Parameters[index].Type), node.Arguments[index].InputName));
-        }
         method.IsAsync = asynchronous;
         method.AddParameter(new Parameter(typeof(System.Threading.CancellationToken), "cancellationToken")
             .AddDefault(SimpleNameExpression.Default));
@@ -60,10 +50,9 @@ internal static class ExecutionEmitter
         }
         foreach (var node in nodes)
         {
-            var inputs = node.Arguments.Where(binding => binding.Unbound || binding.Source is not null)
-                .Select(binding => (IExpression)(binding.Source is { } source
-                    ? Name((parallel ? "task" : "result") + source.Index)
-                    : Name(binding.InputName))).ToList();
+            var inputs = node.Arguments.Where(binding => binding.Source is not null)
+                .Select(binding => (IExpression)Name(
+                    (parallel ? "task" : "result") + binding.Source!.Index)).ToList();
             if (parallel)
                 inputs.AddRange(node.ControlDependencies.Select(dependency =>
                     (IExpression)Name("task" + dependency.Index).Cast(DataType.Task)));

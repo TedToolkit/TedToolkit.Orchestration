@@ -1,15 +1,17 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using TedToolkit.RoslynHelper;
+using Accessibility = Microsoft.CodeAnalysis.Accessibility;
 
 namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 
 internal static class StepContextEmitter
 {
+    private const string ContextHintSuffix = ".StepContext.g.cs";
+
     internal const string CompositeAttributeName =
         "TedToolkit.Orchestration.Pipeline.Attributes.CompositeStepAttribute";
     internal const string LoggerAttributeName =
@@ -17,10 +19,27 @@ internal static class StepContextEmitter
 
     internal static IEnumerable<(string HintName, string Source)> Emit(Compilation compilation)
     {
-        foreach (var type in StepFactory.Types(compilation.Assembly.GlobalNamespace))
+        var sources = StepFactory.Types(compilation.Assembly.GlobalNamespace)
+            .Where(type => CanGenerate(type, compilation))
+            .Select(type =>
+            {
+                var metadataName = GeneratedNames.MetadataName(type);
+                return (Type: type, MetadataName: metadataName,
+                    HintName: GeneratedNames.HintName(type, ContextHintSuffix));
+            })
+            .ToArray();
+        var collisions = new HashSet<string>(sources
+            .GroupBy(source => source.HintName, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key), StringComparer.Ordinal);
+
+        foreach (var source in sources)
         {
-            if (!CanGenerate(type, compilation)) continue;
-            yield return (HintName(type), Source(type));
+            var hintName = collisions.Contains(source.HintName)
+                ? GeneratedNames.DisambiguateHintName(
+                    source.HintName, source.MetadataName, ContextHintSuffix)
+                : source.HintName;
+            yield return (hintName, Source(source.Type));
         }
     }
 
@@ -53,11 +72,11 @@ internal static class StepContextEmitter
         builder.AppendLine("#nullable enable");
         if (!type.ContainingNamespace.IsGlobalNamespace)
         {
-            builder.Append("namespace ").Append(type.ContainingNamespace.ToDisplayString()).AppendLine(";");
+            builder.Append("namespace ").Append(GeneratedNames.Namespace(type.ContainingNamespace)).AppendLine(";");
             builder.AppendLine();
         }
         builder.Append(type.DeclaredAccessibility == Accessibility.Public ? "public " : "internal ")
-            .Append("readonly ref partial struct ").Append(type.Name).AppendLine();
+            .Append("readonly ref partial struct ").Append(type.Name.ToValidIdentifier()).AppendLine();
         builder.AppendLine("{");
         builder.AppendLine("    /// <summary>Gets the configured identity of this Step instance.</summary>");
         builder.AppendLine("    public required string DisplayName { get; init; }");
@@ -68,17 +87,5 @@ internal static class StepContextEmitter
         }
         builder.AppendLine("}");
         return builder.ToString();
-    }
-
-    private static string HintName(INamedTypeSymbol type)
-    {
-        var metadataName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        byte[] hash;
-        using (var algorithm = SHA256.Create())
-            hash = algorithm.ComputeHash(Encoding.UTF8.GetBytes(metadataName));
-        var suffix = new StringBuilder(hash.Length * 2);
-        foreach (var value in hash)
-            suffix.Append(value.ToString("x2", CultureInfo.InvariantCulture));
-        return type.Name + "." + suffix + ".StepContext.g.cs";
     }
 }

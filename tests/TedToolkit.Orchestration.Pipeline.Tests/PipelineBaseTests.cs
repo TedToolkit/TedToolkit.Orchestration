@@ -10,6 +10,10 @@ public partial class ExecutorGeneratorTests
         await Assert.That(runtime.GetType("TedToolkit.Orchestration.Pipeline.StepMetadata")).IsNull();
         await Assert.That(runtime.GetType(
             "TedToolkit.Orchestration.Pipeline.Attributes.StepPolicyAttribute")).IsNull();
+        await Assert.That(runtime.GetType(
+            "TedToolkit.Orchestration.Pipeline.CompilerServices.PipelineExecutionSupport")!
+            .GetMethod("CancelRemainingAsync", System.Reflection.BindingFlags.Public |
+                System.Reflection.BindingFlags.Static)).IsNull();
     }
 
     [Test]

@@ -33,10 +33,10 @@ internal static class StepExecutionEmitter
                 method.AddParameter(new Parameter(Type(rootInputs![index].Type), "__root" + index));
         }
         for (var i = 0; i < node.Arguments.Count; i++)
-            if (node.Arguments[i].Unbound || node.Arguments[i].Source is not null)
-                method.AddParameter(new Parameter(parallel && node.Arguments[i].Source is not null
+            if (node.Arguments[i].Source is not null)
+                method.AddParameter(new Parameter(parallel
                     ? TaskOf(node.Factory.Parameters[i].Type) : Type(node.Factory.Parameters[i].Type),
-                    parallel && node.Arguments[i].Source is not null ? "__dependency" + i : "__input" + i));
+                    parallel ? "__dependency" + i : "__input" + i));
         if (parallel)
             foreach (var dependency in node.ControlDependencies)
                 method.AddParameter(new Parameter(typeof(System.Threading.Tasks.Task), "__prerequisite" + dependency.Index));
@@ -96,9 +96,11 @@ internal static class StepExecutionEmitter
             var guard = new TryStatement();
             guard.Statements.AddRange(method.Statements);
             method.Statements.Clear();
+            var cancellation = new TryStatement();
+            cancellation.AddStatement(Await(Call("__execution.CancelAsync")));
+            cancellation.AddCatch(new CatchClause(typeof(System.Exception)));
             guard.AddCatch(new CatchClause(typeof(System.Exception))
-                .AddStatement(Await(Call(SupportType + ".CancelRemainingAsync", Name("__execution"))))
-                .AddStatement(new ThrowExpression()));
+                .AddStatement(cancellation).AddStatement(new ThrowExpression()));
             method.AddStatement(guard);
         }
         return method;
@@ -207,7 +209,7 @@ internal static class StepExecutionEmitter
                 continue;
             }
             var binding = node.Arguments[argumentIndex];
-            yield return binding.Source is not null || binding.Unbound ? Name("__input" + argumentIndex) :
+            yield return binding.Source is not null ? Name("__input" + argumentIndex) :
                 binding.IsConstant ? binding.Expression! : Name("__value" + argumentIndex);
             argumentIndex++;
         }

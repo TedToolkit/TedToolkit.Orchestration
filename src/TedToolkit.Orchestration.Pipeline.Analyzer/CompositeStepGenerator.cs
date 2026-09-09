@@ -7,11 +7,17 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using TedToolkit.RoslynHelper;
+using TedToolkit.RoslynHelper.Syntaxes;
+using static TedToolkit.Orchestration.Pipeline.Analyzer.GeneratedCode;
+using Accessibility = Microsoft.CodeAnalysis.Accessibility;
 
 namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 
 internal static class CompositeStepGenerator
 {
+    private const string CompositeHintSuffix = ".CompositeStep.g.cs";
+
     internal static bool Generate(SourceProductionContext context, Compilation compilation,
         ImmutableArray<MethodDeclarationSyntax> methods, CSharpParseOptions options)
     {
@@ -35,21 +41,9 @@ internal static class CompositeStepGenerator
         }
         if (valid.Count == 0) return true;
 
-        var contextSources = StepContextEmitter.Emit(compilation).ToArray();
-        var prepared = compilation.AddSyntaxTrees(contextSources.Select(source =>
-            CSharpSyntaxTree.ParseText(source.Source, options, source.HintName)));
-        var stubs = valid.Select(configuration => CompositeStub(prepared, configuration)).ToArray();
-        prepared = prepared.AddSyntaxTrees(stubs.Select((source, index) =>
-            CSharpSyntaxTree.ParseText(source, options, "CompositeResults" + index + ".g.cs")));
-
-        var requestedNames = new HashSet<string>(valid.SelectMany(FactoryNames), StringComparer.Ordinal);
-        var factories = CollectLeafFactories(context, prepared, requestedNames);
-        factories.AddRange(CollectCompositeFactories(prepared, valid, requestedNames));
-        var extensionsText = StepFactory.EmitExtensions(prepared, factories, PipelineSymbols.StepGraphName);
-        context.AddSource("CompositeStepExtensions.g.cs", SourceText.From(extensionsText, Encoding.UTF8));
-        var bound = prepared.AddSyntaxTrees(CSharpSyntaxTree.ParseText(
-            extensionsText, options, "CompositeStepExtensions.g.cs"));
-        factories = factories.Select(factory => factory.Rebind(bound)).ToList();
+        var prepared = PrepareCompilation(context, compilation, valid, options);
+        var bound = prepared.Compilation;
+        var factories = prepared.Factories;
 
         var graphs = new List<CompositeGraph>();
         foreach (var syntax in valid)
@@ -64,19 +58,54 @@ internal static class CompositeStepGenerator
                 inputMap.Add(inputs[index], "__root" + index);
             var names = new HashSet<string>(FactoryNames(syntax), StringComparer.Ordinal);
             var selected = factories.Where(candidate => names.Contains(candidate.Type.Name)).ToArray();
-            var nodes = new GraphReader(context, bound, syntax, selected, false, inputMap).Read();
+            var nodes = new GraphReader(context, bound, syntax, selected, inputMap).Read();
             if (nodes is not null) graphs.Add(new CompositeGraph(syntax, method.ContainingType, factory, inputs, nodes));
         }
 
-        if (HasCycle(context, graphs)) return true;
-        Propagate(graphs);
-        foreach (var graph in graphs)
+        if (!TryResolveGraphProperties(context, graphs)) return true;
+        var graphSources = graphs.Select(graph => (
+            Graph: graph,
+            MetadataName: GeneratedNames.MetadataName(graph.Owner),
+            HintName: GeneratedNames.HintName(graph.Owner, CompositeHintSuffix))).ToArray();
+        var hintCollisions = new HashSet<string>(graphSources
+            .GroupBy(source => source.HintName, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key), StringComparer.Ordinal);
+        foreach (var source in graphSources)
         {
-            context.AddSource(graph.Owner.ToDisplayString() + ".CompositeStep.g.cs",
-                CompositeStepEmitter.Emit(bound, graph.Owner, graph.Syntax, graph.Nodes,
-                    graph.Inputs, graph.Factory.RequiresServices));
+            var hintName = hintCollisions.Contains(source.HintName)
+                ? GeneratedNames.DisambiguateHintName(
+                    source.HintName, source.MetadataName, CompositeHintSuffix)
+                : source.HintName;
+            context.AddSource(hintName,
+                CompositeStepEmitter.Emit(bound, source.Graph.Owner, source.Graph.Syntax,
+                    source.Graph.Nodes, source.Graph.Inputs, source.Graph.Factory.RequiresServices));
         }
         return true;
+    }
+
+    private static (Compilation Compilation, List<StepFactory> Factories) PrepareCompilation(
+        SourceProductionContext context, Compilation compilation,
+        IReadOnlyList<MethodDeclarationSyntax> configurations, CSharpParseOptions options)
+    {
+        var contextSources = StepContextEmitter.Emit(compilation).ToArray();
+        var prepared = compilation.AddSyntaxTrees(contextSources.Select(source =>
+            CSharpSyntaxTree.ParseText(source.Source, options, source.HintName)));
+        var stubs = configurations.Select(configuration => CompositeStub(prepared, configuration)).ToArray();
+        prepared = prepared.AddSyntaxTrees(stubs.Select((source, index) =>
+            CSharpSyntaxTree.ParseText(source, options, "CompositeResults" + index + ".g.cs")));
+
+        var requestedNames = new HashSet<string>(
+            configurations.SelectMany(FactoryNames), StringComparer.Ordinal);
+        var factories = CollectLeafFactories(context, prepared, requestedNames);
+        factories.AddRange(CollectCompositeFactories(prepared, configurations, requestedNames));
+        var extensionsText = StepFactory.EmitExtensions(
+            prepared, factories, PipelineSymbols.StepGraphName);
+        context.AddSource("CompositeStepExtensions.g.cs",
+            SourceText.From(extensionsText, Encoding.UTF8));
+        var bound = prepared.AddSyntaxTrees(CSharpSyntaxTree.ParseText(
+            extensionsText, options, "CompositeStepExtensions.g.cs"));
+        return (bound, factories.Select(factory => factory.Rebind(bound)).ToList());
     }
 
     internal static string? ContractError(INamedTypeSymbol owner, Compilation compilation)
@@ -212,65 +241,48 @@ internal static class CompositeStepGenerator
             }
     }
 
-    private static void Propagate(IReadOnlyList<CompositeGraph> graphs)
-    {
-        bool changed;
-        do
-        {
-            changed = false;
-            foreach (var graph in graphs)
-            {
-                var synchronous = graph.Nodes.All(node => node.Factory.IsSynchronous);
-                var services = graph.Factory.HasLogger || graph.Nodes.Any(node => node.Factory.RequiresServices);
-                if (graph.Factory.IsSynchronous != synchronous)
-                {
-                    graph.Factory.IsSynchronous = synchronous;
-                    changed = true;
-                }
-                if (graph.Factory.RequiresServices != services)
-                {
-                    graph.Factory.RequiresServices = services;
-                    changed = true;
-                }
-            }
-        } while (changed);
-    }
-
-    private static bool HasCycle(SourceProductionContext context, IReadOnlyList<CompositeGraph> graphs)
+    private static bool TryResolveGraphProperties(
+        SourceProductionContext context, IReadOnlyList<CompositeGraph> graphs)
     {
         var byType = graphs.ToDictionary(graph => graph.Owner, SymbolEqualityComparer.Default);
         var visiting = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         bool Visit(CompositeGraph graph)
         {
-            if (visited.Contains(graph.Owner)) return false;
-            if (!visiting.Add(graph.Owner)) return true;
-            foreach (var node in graph.Nodes.Where(node => node.Factory.IsComposite))
-                if (byType.TryGetValue(node.Factory.Type, out var nested) && Visit(nested)) return true;
-            visiting.Remove(graph.Owner);
-            visited.Add(graph.Owner);
-            return false;
-        }
-        foreach (var graph in graphs)
-            if (Visit(graph))
+            if (visited.Contains(graph.Owner)) return true;
+            if (!visiting.Add(graph.Owner))
             {
                 context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StaticGraph,
                     graph.Syntax.GetLocation(), "Composite Step dependency cycle detected"));
-                return true;
+                return false;
             }
-        return false;
+            foreach (var node in graph.Nodes.Where(node => node.Factory.IsComposite))
+                if (byType.TryGetValue(node.Factory.Type, out var nested) && !Visit(nested))
+                    return false;
+            graph.Factory.IsSynchronous = graph.Nodes.All(node => node.Factory.IsSynchronous);
+            graph.Factory.RequiresServices = graph.Factory.HasLogger ||
+                graph.Nodes.Any(node => node.Factory.RequiresServices);
+            visiting.Remove(graph.Owner);
+            visited.Add(graph.Owner);
+            return true;
+        }
+        foreach (var graph in graphs)
+            if (!Visit(graph)) return false;
+        return true;
     }
 
     private static string CompositeStub(Compilation compilation, MethodDeclarationSyntax syntax)
     {
         var owner = ((IMethodSymbol)compilation.GetSemanticModel(syntax.SyntaxTree)
             .GetDeclaredSymbol(syntax)!).ContainingType;
-        var space = owner.ContainingNamespace.IsGlobalNamespace
-            ? ""
-            : "namespace " + owner.ContainingNamespace.ToDisplayString() + ";\n";
-        var accessibility = owner.DeclaredAccessibility == Accessibility.Public ? "public" : "internal";
-        return "// <auto-generated/>\n#nullable enable\n" + space + "\n" + accessibility +
-            " readonly ref partial struct " + owner.Name + " { public readonly struct Results { } }";
+        var declaration = new TypeDeclaration(owner.Name, TypeDeclarationType.REF_STRUCT)
+            .Readonly.Partial;
+        _ = owner.DeclaredAccessibility == Accessibility.Public
+            ? declaration.Public
+            : declaration.Internal;
+        declaration.AddMember(new TypeDeclaration("Results", TypeDeclarationType.STRUCT)
+            .Public.Readonly);
+        return Render(GeneratedNames.Namespace(owner.ContainingNamespace), declaration);
     }
 
     private static IEnumerable<string> FactoryNames(MethodDeclarationSyntax configuration) =>

@@ -31,8 +31,6 @@ internal static class StepSymbols
     internal static bool IsLeafStep(ITypeSymbol type, Compilation compilation) =>
         type.TypeKind != TypeKind.Interface && Contracts(type, compilation).Length != 0;
 
-    internal static bool IsStep(ITypeSymbol type, Compilation compilation) => IsLeafStep(type, compilation);
-
     internal static string? InvalidContract(INamedTypeSymbol type, Compilation compilation)
     {
         if (!type.IsRefLikeType || type.TypeKind != TypeKind.Struct) return "steps must be ref structs";

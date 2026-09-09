@@ -17,7 +17,7 @@ public partial class ExecutorGeneratorTests
         """;
 
     [Test]
-    public async Task UnboundParametersFixedValuesAliasesAndTypedResultsWorkAcrossInvocations()
+    public async Task InputsFixedValuesAliasesAndTypedResultsWorkAcrossInvocations()
     {
         var result = await Run(NamedSteps + """
             internal readonly ref partial struct Load(int value) : IAsyncStep<int>

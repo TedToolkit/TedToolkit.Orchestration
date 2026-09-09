@@ -40,7 +40,7 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
                     type.Locations[0], compositeReason));
             return;
         }
-        if (!StepSymbols.IsStep(type, context.Compilation)) return;
+        if (!StepSymbols.IsLeafStep(type, context.Compilation)) return;
         if (type.DeclaredAccessibility != Accessibility.Internal || type.IsFileLocal)
             context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StepMustBeInternal, type.Locations[0], type.Name));
         var reason = StepSymbols.InvalidContract(type, context.Compilation);

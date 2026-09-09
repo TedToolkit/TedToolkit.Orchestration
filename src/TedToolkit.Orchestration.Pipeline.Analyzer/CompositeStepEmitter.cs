@@ -21,7 +21,7 @@ internal static class CompositeStepEmitter
         _ = owner.DeclaredAccessibility == Microsoft.CodeAnalysis.Accessibility.Public
             ? declaration.Public
             : declaration.Internal;
-        var resultName = owner.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + ".Results";
+        var resultName = StepSymbols.TypeName(owner) + ".Results";
         declaration.AddBaseType(new DataType(asynchronous
             ? "global::TedToolkit.Orchestration.Pipeline.IAsyncCompositeStep<" + resultName + ">"
             : "global::TedToolkit.Orchestration.Pipeline.ICompositeStep<" + resultName + ">"));
@@ -40,19 +40,15 @@ internal static class CompositeStepEmitter
 
         var nameSpace = owner.ContainingNamespace.IsGlobalNamespace
             ? ""
-            : owner.ContainingNamespace.ToDisplayString();
+            : GeneratedNames.Namespace(owner.ContainingNamespace);
         return RenderConfiguration(compilation, nameSpace, configuration, declaration);
     }
 
     private static Method Forwarder(INamedTypeSymbol owner, IReadOnlyList<IParameterSymbol> inputs,
         bool asynchronous, bool discardResults, bool requiresServices)
     {
-        var methodName = (discardResults ? "ExecuteWithoutResults" : "Execute") +
-            (asynchronous ? "Async" : "");
-        var resultType = asynchronous
-            ? discardResults ? DataType.Task : DataType.TaskOf(new DataType("Results"))
-            : discardResults ? DataType.Void : new DataType("Results");
-        var method = new Method(methodName, new ReturnType(resultType)).Public
+        var signature = ExecutionSignature(asynchronous, discardResults);
+        var method = new Method(signature.Name, new ReturnType(signature.ReturnType)).Public
             .AddRootDescription(Summary(discardResults
                 ? "Executes this Composite Step without collecting results."
                 : "Executes this Composite Step and returns its typed results."));
@@ -69,7 +65,7 @@ internal static class CompositeStepEmitter
             arguments.Add(Name(providerName));
         arguments.AddRange(inputs.Select(parameter => (IExpression)Name(parameter.Name.ToValidIdentifier())));
         arguments.Add(Name("cancellationToken"));
-        var call = Call(methodName + "Core", arguments.ToArray());
+        var call = Call(signature.Name + "Core", arguments.ToArray());
         if (discardResults && !asynchronous) method.AddStatement(call);
         else method.AddStatement(call.Return);
         return method;
@@ -98,12 +94,8 @@ internal static class CompositeStepEmitter
     private static Method FacadeMethod(INamedTypeSymbol owner, IReadOnlyList<IParameterSymbol> inputs,
         bool asynchronous, bool discardResults, bool requiresServices, bool hasLogger)
     {
-        var methodName = (discardResults ? "ExecuteWithoutResults" : "Execute") +
-            (asynchronous ? "Async" : "");
-        var resultType = asynchronous
-            ? discardResults ? DataType.Task : DataType.TaskOf(new DataType("Results"))
-            : discardResults ? DataType.Void : new DataType("Results");
-        var method = new Method(methodName, new ReturnType(resultType)).Public
+        var signature = ExecutionSignature(asynchronous, discardResults);
+        var method = new Method(signature.Name, new ReturnType(signature.ReturnType)).Public
             .AddRootDescription(Summary(discardResults
                 ? "Executes the root graph without collecting results."
                 : "Executes the root graph and returns its typed results."));
@@ -132,7 +124,7 @@ internal static class CompositeStepEmitter
         if (requiresServices)
             arguments.Add(Name("_services"));
         arguments.Add(Name("cancellationToken"));
-        var call = Call(((IExpression)creation).Sub(methodName), arguments.ToArray());
+        var call = Call(((IExpression)creation).Sub(signature.Name), arguments.ToArray());
         if (discardResults && !asynchronous) method.AddStatement(call);
         else method.AddStatement(call.Return);
         return method;
