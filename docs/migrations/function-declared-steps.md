@@ -25,7 +25,7 @@ Use `Task` or `Task<TResult>` for asynchronous Steps. The former `IStep`, `IStep
 
 ## Composite Steps and root Pipelines
 
-Replace the Composite object and its primary-constructor inputs with a top-level static partial class containing `static void Configuration(StepGraph, ...)`. Parameters after `StepGraph` follow the same data, service, default-value, and cancellation rules as Leaf methods.
+Replace the Composite object and its primary-constructor inputs with a top-level static partial class containing an arbitrarily named `static void` function whose first parameter is `StepGraph`. Parameters after `StepGraph` follow the same data, service, default-value, and cancellation rules as Leaf methods. A class may group several differently named Composite functions; each function name becomes its `StepGraph` factory name. Same-name Composite overloads are rejected.
 
 Add `[Pipeline]` only when callers need a root execution facade. The generated facade is nested in the containing class and defaults to `<method name>Pipeline`; `[Pipeline(Name = "Import")]` generates `ImportPipeline`.
 
@@ -48,7 +48,7 @@ var oldResults = oldPipeline.Execute(path: "input.csv");
 public static partial class Import
 {
     [Pipeline]
-    public static void Configuration(
+    public static void Run(
         StepGraph steps,
         string path,
         int batchSize = 100,
@@ -60,11 +60,11 @@ public static partial class Import
     }
 }
 
-var pipeline = new Import.ConfigurationPipeline(services);
+var pipeline = new Import.RunPipeline(services);
 var results = pipeline.Execute(path: "input.csv");
 ```
 
-Pipeline constructors now receive only `IServiceProvider` when the selected root directly or transitively needs services. Business and defaulted inputs move to `Execute`/`ExecuteAsync`. A Step or Configuration without `[Pipeline]` remains composable through `StepGraph` but gets no root facade.
+Pipeline constructors now receive only `IServiceProvider` when the selected root directly or transitively needs services. Business and defaulted inputs move to the single `Execute`/`ExecuteAsync` method. A Composite declaration without `[Pipeline]` remains composable through `StepGraph` but gets no root facade; compose it with `steps.<method name>(...)`, not the containing type name. Generated Composite code uses `<method name>Result` and one same-name static execution overload; it emits no Step/state struct, prepare method, reserved execute member, or protocol Attribute. `ExecuteWithoutResults*` no longer exists. A root `void` or non-generic `Task` Leaf keeps the natural `void` or `Task` return shape; no placeholder result type is introduced.
 
 ## Logging and display names
 
@@ -74,6 +74,6 @@ Remove `[StepLogger]`, generated Logger properties, and all `StepContext`/`StepE
 
 ## Compatibility and recovery
 
-This migration intentionally removes the object contracts, `[CompositeStep]`, `[StepLogger]`, `ICompositeStep<TResult>`, and `IAsyncCompositeStep<TResult>`. There is no compatibility adapter or reflection fallback. Public Composite composition across assemblies requires matching runtime/analyzer packages and consumer recompilation. To roll back, restore the previous matching package versions and the corresponding object declarations from source control.
+This migration intentionally removes the object contracts, `[CompositeStep]`, `[StepLogger]`, `ICompositeStep<TResult>`, `IAsyncCompositeStep<TResult>`, `GeneratedCompositeStepAttribute`, generic `Results`, and `ExecuteWithoutResults*`. There is no compatibility adapter or reflection fallback. Public Composite composition across assemblies requires matching runtime/analyzer packages and consumer recompilation. To roll back, restore the previous matching package versions and the corresponding declarations from source control.
 
 When two referenced assemblies expose a Composite with the same namespace and type name, assign each project/package reference a distinct C# alias and call the generated assembly-qualified extension carrier. The generator emits matching `extern alias` qualifiers; without distinct aliases it reports the collision instead of guessing an assembly.

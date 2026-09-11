@@ -75,7 +75,7 @@ internal static partial class FlatPair
 internal static partial class Pair
 {
     [Pipeline]
-    public static void Configuration(StepGraph steps, int input, WorkMode mode)
+    public static void Build(StepGraph steps, int input, WorkMode mode)
     {
         var first = steps.AddStep(input, 1, mode);
         var output = steps.AddStep(first, 1, mode);
@@ -87,7 +87,7 @@ internal static partial class NestedPair
     [Pipeline]
     public static void Configuration(StepGraph steps, int input, WorkMode mode)
     {
-        var pair = steps.Pair(input, mode);
+        var pair = steps.Build(input, mode);
     }
 }
 
@@ -104,7 +104,7 @@ internal static partial class FlatSyncPair
 internal static partial class SyncPair
 {
     [Pipeline]
-    public static void Configuration(StepGraph steps, int input)
+    public static void Build(StepGraph steps, int input)
     {
         var first = steps.SyncAdd(input, 1);
         var output = steps.SyncAdd(first, 1);
@@ -116,6 +116,6 @@ internal static partial class NestedSyncPair
     [Pipeline]
     public static void Configuration(StepGraph steps, int input)
     {
-        var pair = steps.SyncPair(input);
+        var pair = steps.Build(input);
     }
 }

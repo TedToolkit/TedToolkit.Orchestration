@@ -94,7 +94,7 @@ public partial class ExecutorGeneratorTests
             public static partial class Increment
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps, int value)
+                public static void Build(StepGraph steps, int value)
                 {
                     var incremented = steps.AddOne(value);
                 }
@@ -111,13 +111,13 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps, int value)
                 {
-                    var increment = steps.Increment(value);
+                    var increment = steps.Build(value);
                 }
             }
             """, MetadataReference.CreateFromImage(image.ToArray()), "CompositeConsumer");
         await NoErrors(consumer);
         await Assert.That(consumer.GeneratedSource).Contains(
-            "global::Increment.__TedToolkitExecuteCompositeStep");
+            "global::Increment.Build");
     }
 
     [Test]
@@ -134,7 +134,7 @@ public partial class ExecutorGeneratorTests
                 public static partial class Transform
                 {
                     [Pipeline]
-                    public static void Configuration(StepGraph steps, int value)
+                    public static void Build(StepGraph steps, int value)
                     {
                         var number = steps.AddOne(value);
                     }
@@ -150,7 +150,7 @@ public partial class ExecutorGeneratorTests
                 public static partial class Transform
                 {
                     [Pipeline]
-                    public static void Configuration(StepGraph steps, string value)
+                    public static void Build(StepGraph steps, string value)
                     {
                         var text = steps.Append(value);
                     }
@@ -159,17 +159,17 @@ public partial class ExecutorGeneratorTests
             public static partial class Both
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps, int value, string text)
+                public static void Run(StepGraph steps, int value, string text)
                 {
-                    var number = steps.Transform(value);
-                    var textValue = steps.Transform(text);
+                    var number = Alpha_Transform_BuildExtensions.Build(steps, value);
+                    var textValue = Beta_Transform_BuildExtensions.Build(steps, text);
                 }
             }
             public static class Scenario
             {
                 public static Task<string> Run()
                 {
-                    var result = new Both.ConfigurationPipeline().Execute(1, "x");
+                    var result = new Both.RunPipeline().Execute(1, "x");
                     return Task.FromResult($"{result.Number.Number}:{result.TextValue.Text}");
                 }
             }
@@ -227,12 +227,12 @@ public partial class ExecutorGeneratorTests
             public static partial class First
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps) { steps.Second(); }
+                public static void BuildFirst(StepGraph steps) { steps.BuildSecond(); }
             }
             public static partial class Second
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps) { steps.First(); }
+                public static void BuildSecond(StepGraph steps) { steps.BuildFirst(); }
             }
             """);
 
@@ -255,7 +255,7 @@ public partial class ExecutorGeneratorTests
                 public static partial class Increment
                 {
                     [Pipeline]
-                    public static void Configuration(StepGraph steps, int value)
+                    public static void Build(StepGraph steps, int value)
                     {
                         var output = steps.AddOne(value);
                     }
@@ -273,7 +273,7 @@ public partial class ExecutorGeneratorTests
                 public static partial class Increment
                 {
                     [Pipeline]
-                    public static void Configuration(StepGraph steps, int value)
+                    public static void Build(StepGraph steps, int value)
                     {
                         var output = steps.Double(value);
                     }
@@ -302,8 +302,8 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps, int value)
                 {
-                    var first = Alpha_IncrementExtensions.Increment(steps, value);
-                    var second = Beta_IncrementExtensions.Increment(steps, value);
+                    var first = Alpha_Increment_BuildExtensions.Build(steps, value);
+                    var second = Beta_Increment_BuildExtensions.Build(steps, value);
                 }
             }
             public static class Scenario
@@ -318,9 +318,9 @@ public partial class ExecutorGeneratorTests
             MetadataReference.CreateFromImage(betaImage));
         await NoErrors(consumer);
         await Assert.That(consumer.GeneratedSource).Contains(
-            "global::Alpha.Increment.__TedToolkitExecuteCompositeStep");
+            "global::Alpha.Increment.Build");
         await Assert.That(consumer.GeneratedSource).Contains(
-            "global::Beta.Increment.__TedToolkitExecuteCompositeStep");
+            "global::Beta.Increment.Build");
 
         using var consumerImage = new MemoryStream();
         var emitted = consumer.Compilation.Emit(consumerImage);
@@ -350,7 +350,7 @@ public partial class ExecutorGeneratorTests
             public static partial class Inner
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps, int value)
+                public static void Build(StepGraph steps, int value)
                 {
                     var adjusted = steps.AddOffset(value);
                 }
@@ -361,7 +361,7 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps, int value)
                 {
-                    var inner = steps.Inner(value);
+                    var inner = steps.Build(value);
                 }
             }
 
@@ -399,7 +399,7 @@ public partial class ExecutorGeneratorTests
             public static partial class InnerRetry
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps)
+                public static void Build(StepGraph steps)
                 {
                     var value = steps.Eventually().WithRetry(1);
                 }
@@ -409,7 +409,7 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps)
                 {
-                    var inner = steps.InnerRetry().WithRetry(1);
+                    var inner = steps.Build().WithRetry(1);
                 }
             }
             public static class Scenario
@@ -448,7 +448,8 @@ public partial class ExecutorGeneratorTests
         await NoErrors(generated);
         await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "CS0282")).IsFalse();
         await Assert.That(generated.GeneratedSource.Contains("required string DisplayName")).IsFalse();
-        await Assert.That(generated.GeneratedSource).Contains("__TedToolkitCompositeStepState");
+        await Assert.That(generated.GeneratedSource).DoesNotContain("__TedToolkitCompositeStepState");
+        await Assert.That(generated.GeneratedSource).DoesNotContain("__TedToolkitPrepareCompositeStep");
     }
 
     [Test]
@@ -540,9 +541,9 @@ public partial class ExecutorGeneratorTests
 
         await Assert.That(hintNames.Length).IsEqualTo(5);
         await Assert.That(hintNames.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(5);
-        await Assert.That(hintNames).Contains("A_B.C.CompositeStep.g.cs");
-        await Assert.That(hintNames).Contains("A.B_C.CompositeStep.g.cs");
-        await Assert.That(hintNames).Contains("class.event.CompositeStep.g.cs");
+        await Assert.That(hintNames).Contains("A_B.C.Configuration.CompositeStep.g.cs");
+        await Assert.That(hintNames).Contains("A.B_C.Configuration.CompositeStep.g.cs");
+        await Assert.That(hintNames).Contains("class.event.Configuration.CompositeStep.g.cs");
         await Assert.That(hintNames.Count(name => name.StartsWith("Demo.e", StringComparison.Ordinal))).IsEqualTo(2);
         await Assert.That(hintNames.Any(name => System.Text.RegularExpressions.Regex.IsMatch(
             name, @"\.[0-9a-f]{64}\.CompositeStep\.g\.cs$"))).IsFalse();
@@ -640,7 +641,7 @@ public partial class ExecutorGeneratorTests
             public static partial class LoggedRoot
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps, [FromServices] ILogger __logger)
+                public static void Build(StepGraph steps, [FromServices] ILogger __logger)
                 {
                     var value = steps.Touch();
                 }
@@ -652,13 +653,13 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection()
                         .AddSingleton<ILoggerFactory, CaptureLoggerFactory>()
                         .BuildServiceProvider();
-                    var result = new LoggedRoot.ConfigurationPipeline(services).Execute();
+                    var result = new LoggedRoot.BuildPipeline(services).Execute();
                     return Task.FromResult($"{result.Value}:{CaptureLoggerFactory.Category}:{CaptureLoggerFactory.Creations}:{TouchStepMethods.Attempts}");
                 }
             }
             """);
 
-        await Assert.That(value).IsEqualTo("42:LoggedRoot.Configuration[LoggedRoot]:1:1");
+        await Assert.That(value).IsEqualTo("42:LoggedRoot.Build[LoggedRoot]:1:1");
     }
 
     [Test]
@@ -691,7 +692,7 @@ public partial class ExecutorGeneratorTests
             public static partial class LoggedInner
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps, [FromServices] ILogger __logger)
+                public static void Build(StepGraph steps, [FromServices] ILogger __logger)
                 {
                     var value = steps.Eventually();
                 }
@@ -701,7 +702,7 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps)
                 {
-                    var inner = steps.LoggedInner()
+                    var inner = steps.Build()
                         .WithDisplayName("Friendly Composite")
                         .WithRetry(1);
                 }
@@ -720,7 +721,7 @@ public partial class ExecutorGeneratorTests
             """);
 
         await Assert.That(value).IsEqualTo(
-            "42:LoggedInner.Configuration[LoggedOuter/Friendly Composite]:1:2");
+            "42:LoggedInner.Build[LoggedOuter/Friendly Composite]:1:2");
     }
 
     [Test]
@@ -748,7 +749,7 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection().BuildServiceProvider();
                     try
                     {
-                        new LoggedRoot.ConfigurationPipeline(services).ExecuteWithoutResults();
+                        new LoggedRoot.ConfigurationPipeline(services).Execute();
                         return Task.FromResult("unexpected");
                     }
                     catch (InvalidOperationException)
@@ -802,7 +803,7 @@ public partial class ExecutorGeneratorTests
                         .BuildServiceProvider();
                     try
                     {
-                        new LoggingFailure.ConfigurationPipeline(services).ExecuteWithoutResults();
+                        new LoggingFailure.ConfigurationPipeline(services).Execute();
                         return Task.FromResult("unexpected");
                     }
                     catch (InvalidOperationException exception)
@@ -843,7 +844,7 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection().BuildServiceProvider();
                     try
                     {
-                        new MissingLogging.ConfigurationPipeline(services).ExecuteWithoutResults();
+                        new MissingLogging.ConfigurationPipeline(services).Execute();
                         return Task.FromResult("unexpected");
                     }
                     catch (InvalidOperationException)
@@ -891,7 +892,7 @@ public partial class ExecutorGeneratorTests
                 {
                     var state = new State();
                     var services = new ServiceCollection().AddSingleton(state).BuildServiceProvider();
-                    new Ordered.ConfigurationPipeline(services).ExecuteWithoutResults();
+                    new Ordered.ConfigurationPipeline(services).Execute();
                     return Task.FromResult(state.Observed.ToString());
                 }
             }
@@ -941,7 +942,7 @@ public partial class ExecutorGeneratorTests
             public static partial class InnerFailure
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps, State state)
+                public static void Build(StepGraph steps, State state)
                 {
                     var slow = steps.Slow(state);
                     var failure = steps.Fail(state);
@@ -952,7 +953,7 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps, State state)
                 {
-                    var inner = steps.InnerFailure(state);
+                    var inner = steps.Build(state);
                 }
             }
             public static class Scenario
@@ -1006,7 +1007,7 @@ public partial class ExecutorGeneratorTests
             public static partial class InnerCancellation
             {
                 [Pipeline]
-                public static void Configuration(StepGraph steps, State state)
+                public static void Build(StepGraph steps, State state)
                 {
                     var waiting = steps.Wait(state);
                 }
@@ -1016,7 +1017,7 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps, State state)
                 {
-                    var inner = steps.InnerCancellation(state);
+                    var inner = steps.Build(state);
                 }
             }
             public static class Scenario

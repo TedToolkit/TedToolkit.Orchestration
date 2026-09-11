@@ -20,8 +20,8 @@ public partial class ExecutorGeneratorTests
             ? (result ? "return Task.FromException<int>(state.Last);" : "return Task.FromException(state.Last);")
             : "throw state.Last;";
         var execute = asynchronous
-            ? (result ? "ExecuteAsync" : "ExecuteWithoutResultsAsync")
-            : (result ? "Execute" : "ExecuteWithoutResults");
+            ? "ExecuteAsync"
+            : "Execute";
 
         var source = """
             public sealed class State

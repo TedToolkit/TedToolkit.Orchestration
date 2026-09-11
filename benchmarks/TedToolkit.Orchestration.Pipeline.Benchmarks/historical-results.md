@@ -251,7 +251,7 @@ This suite does not establish large-graph scaling, multi-request throughput, rea
 
 
 
-Current synchronous benchmark code uses void ExecuteWithoutResults and an equivalent void handwritten baseline. The recorded measurements above predate direct Step construction and synchronous entry points; they are not measurements of this revision.
+That historical synchronous benchmark used void `ExecuteWithoutResults` and an equivalent void handwritten baseline. The current benchmark uses the single natural `Execute` entry and discards its named Composite result. The recorded measurements above predate direct Step construction and synchronous entry points; they are not measurements of this revision.
 
 
 ## Completed Task result access, 2026-09-05

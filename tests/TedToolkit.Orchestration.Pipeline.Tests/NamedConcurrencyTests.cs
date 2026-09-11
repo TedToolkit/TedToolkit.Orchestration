@@ -84,7 +84,7 @@ public partial class ExecutorGeneratorTests
             try { await execution; return "unexpected"; }
             catch (OperationCanceledException e) { return $"{e.CancellationToken == stepToken && stepToken != cancellation.Token && stepToken.IsCancellationRequested}:{cleaned}"; }
             catch (InvalidOperationException e) { return $"{ReferenceEquals(e, expected)}:{cleaned}"; }
-            """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")
+            """.Replace("METHOD", "ExecuteAsync")
             .Replace("FAIL_ACTION", callerCancels ? "cancellation.Cancel(); await Task.Delay(-1, token); return 1;" : "throw expected;");
         var result = await Run(NamedSteps + ConcurrentSteps + """
             public static partial class Example

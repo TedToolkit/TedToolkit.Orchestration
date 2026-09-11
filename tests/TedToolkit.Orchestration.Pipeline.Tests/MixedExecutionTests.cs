@@ -53,7 +53,7 @@ public partial class ExecutorGeneratorTests
                 var first = state.Last;
                 var second = await pipeline.ExecuteAsync(seedValue: 9, waitGate: Task.CompletedTask, state: state);
                 return $"{before}:{early}:{first}:{second.Finish}:{state.Disposed}:{state.Order}";
-                """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")));
+                """.Replace("METHOD", "ExecuteAsync")));
         await Assert.That(result).IsEqualTo("SA:False:13:23:2:SAaFDSAaFD");
     }
 
@@ -124,7 +124,7 @@ public partial class ExecutorGeneratorTests
                 finally { release.TrySetResult(); }
                 await pending;
                 return $"{premature}:{state.Roots}:{state.Joined}:{state.Stored}";
-                """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")));
+                """.Replace("METHOD", "ExecuteAsync")));
         await Assert.That(result).IsEqualTo("False:1:1:31");
     }
 

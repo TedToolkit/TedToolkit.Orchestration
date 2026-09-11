@@ -25,13 +25,15 @@ public partial class ExecutorGeneratorTests
             """);
         await NoErrors(generated);
         var owner = generated.Compilation.GetTypeByMetadataName("Example")!;
-        var root = (MethodDeclarationSyntax)owner.GetMembers("RunRoot0Async").OfType<IMethodSymbol>().Single()
+        var root = (MethodDeclarationSyntax)owner.GetMembers(
+                "Run13_Configuration_4_Root_0Async").OfType<IMethodSymbol>().Single()
             .DeclaringSyntaxReferences.Single().GetSyntax();
         await Assert.That(root.DescendantNodes().OfType<InvocationExpressionSyntax>()
             .Count(call => call.Expression.ToString() == "executionToken.ThrowIfCancellationRequested")).IsEqualTo(3);
-        foreach (var name in new[] { "ExecuteAsync", "ExecuteWithoutResultsAsync" })
+        foreach (var name in new[] { "Configuration" })
         {
-            var syntax = (MethodDeclarationSyntax)owner.GetMembers(name + "Core").OfType<IMethodSymbol>().Single()
+            var syntax = (MethodDeclarationSyntax)owner.GetMembers(name).OfType<IMethodSymbol>()
+                .Single(method => method.ReturnType.Name == "Task")
                 .DeclaringSyntaxReferences.Single().GetSyntax();
             await Assert.That(syntax.DescendantNodes().Any(node => node is TryStatementSyntax or LocalFunctionStatementSyntax)).IsFalse();
             var waits = syntax.DescendantNodes().OfType<InvocationExpressionSyntax>()
@@ -106,7 +108,7 @@ public partial class ExecutorGeneratorTests
                 {
                     return $"{ReferenceEquals(error, state.Expected)}:{cleaned}:{state.Downstream}:{state.Constructed}";
                 }
-                """.Replace("ARGUMENT", argumentFailure ? "true" : "false").Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")));
+                """.Replace("ARGUMENT", argumentFailure ? "true" : "false").Replace("METHOD", "ExecuteAsync")));
         await Assert.That(result).IsEqualTo(argumentFailure ? "True:1:0:0" : "True:1:0:1");
     }
 

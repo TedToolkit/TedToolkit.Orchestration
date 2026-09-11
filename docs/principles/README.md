@@ -12,7 +12,7 @@ Resolve type compatibility, graph shape, ordering and fixed policy values during
 
 Status: Active. Strength: Required.
 
-Fully synchronous graphs use direct synchronous calls. Linear chains use direct calls and awaits. Parallel graphs use typed Step tasks for dependency coordination, including synchronous consumers of asynchronous results, without Task.Run. Default policies emit no retry loops or timeout sources. Fully synchronous graphs have synchronous entry points. Completion-only execution omits result containers and collection boxing. Required business tasks, asynchronous state, concurrency coordination and explicitly collected typed results remain legitimate costs.
+Fully synchronous graphs use direct synchronous calls. Linear chains use direct calls and awaits. Parallel graphs use typed Step tasks for dependency coordination, including synchronous consumers of asynchronous results, without Task.Run. Default policies emit no retry loops or timeout sources. Fully synchronous graphs have synchronous entry points. Every root Pipeline has one natural entry: business results stay strongly typed, Composite results use their generated named container, and completion-only Leaves return `void` or `Task` without a placeholder value. Completion-only Leaves remain non-generic graph nodes and do not create a data edge or result-collection path. Required business tasks, asynchronous state, concurrency coordination and explicitly collected typed results remain legitimate costs. This natural-return rule is defined by [ADR-0007](../adr/ADR-0007-natural-pipeline-return-shapes.md).
 
 ## P3 - Prefer value semantics for framework data
 

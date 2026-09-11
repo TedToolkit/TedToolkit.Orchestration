@@ -6,27 +6,25 @@ namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 
 internal static class StepSymbols
 {
-    internal const string StepAttributeName =
+    internal const string STEP_ATTRIBUTE_NAME =
         "TedToolkit.Orchestration.Pipeline.Attributes.StepAttribute";
-    internal const string PipelineAttributeName =
+    internal const string PIPELINE_ATTRIBUTE_NAME =
         "TedToolkit.Orchestration.Pipeline.Attributes.PipelineAttribute";
-    internal const string CompositeProtocolAttributeName =
-        "TedToolkit.Orchestration.Pipeline.CompilerServices.GeneratedCompositeStepAttribute";
-    internal const string VoidBuilderName = "TedToolkit.Orchestration.Pipeline.StepBuilder";
-    internal const string ServiceName =
+    internal const string VOID_BUILDER_NAME = "TedToolkit.Orchestration.Pipeline.StepBuilder";
+    internal const string SERVICE_NAME =
         "TedToolkit.Orchestration.Pipeline.Attributes.FromServicesAttribute";
-    internal const string ArgumentName = "TedToolkit.Orchestration.Pipeline.StepArgument`1";
-    internal const string BuilderName = "TedToolkit.Orchestration.Pipeline.StepBuilder`1";
+    internal const string ARGUMENT_NAME = "TedToolkit.Orchestration.Pipeline.StepArgument`1";
+    internal const string BUILDER_NAME = "TedToolkit.Orchestration.Pipeline.StepBuilder`1";
 
     internal static bool IsLeafStep(IMethodSymbol method) =>
-        HasAttribute(method, StepAttributeName);
+        HasAttribute(method, STEP_ATTRIBUTE_NAME);
 
     internal static bool IsPipeline(IMethodSymbol method) =>
-        HasAttribute(method, PipelineAttributeName);
+        HasAttribute(method, PIPELINE_ATTRIBUTE_NAME);
 
     internal static AttributeData? PipelineAttribute(IMethodSymbol method) =>
         method.GetAttributes().FirstOrDefault(attribute =>
-            attribute.AttributeClass?.ToDisplayString() == PipelineAttributeName);
+            attribute.AttributeClass?.ToDisplayString() == PIPELINE_ATTRIBUTE_NAME);
 
     internal static bool HasAttribute(ISymbol symbol, string metadataName) =>
         symbol.GetAttributes().Any(attribute =>
@@ -118,7 +116,7 @@ internal static class StepSymbols
 
     internal static AttributeData? ServiceAttribute(IParameterSymbol parameter) =>
         parameter.GetAttributes().FirstOrDefault(attribute =>
-            attribute.AttributeClass?.ToDisplayString() == ServiceName);
+            attribute.AttributeClass?.ToDisplayString() == SERVICE_NAME);
 
     internal static bool SameType(ITypeSymbol left, ITypeSymbol right) =>
         SymbolEqualityComparer.IncludeNullability.Equals(left, right);
@@ -129,16 +127,16 @@ internal static class StepSymbols
             named.TypeArguments.Any(HasTypeParameter) ||
             named.ContainingType is not null && HasTypeParameter(named.ContainingType));
 
-    private static readonly SymbolDisplayFormat TypeDisplayFormat =
+    private static readonly SymbolDisplayFormat _typeDisplayFormat =
         SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
             SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers |
             SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
-    internal static string TypeName(ITypeSymbol type) => type.ToDisplayString(TypeDisplayFormat);
+    internal static string TypeName(ITypeSymbol type) => type.ToDisplayString(_typeDisplayFormat);
 
     internal static string TypeName(ITypeSymbol type, IAssemblySymbol assembly, string alias)
     {
-        var parts = type.ToDisplayParts(TypeDisplayFormat);
+        var parts = type.ToDisplayParts(_typeDisplayFormat);
         var result = new StringBuilder();
         for (var index = 0; index < parts.Length; index++)
         {

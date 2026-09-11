@@ -1,6 +1,6 @@
 # ADR-0004：以函数声明 Composite Step，并显式选择 Pipeline 入口
 
-- 状态：Accepted
+- 状态：Superseded
 - 日期：2026-09-10
 - 决策所有者：library maintainers
 - 批准来源：用户于 2026-09-10 在当前 Codex 任务中明确确认函数式 Configuration、Pipeline 执行参数与生成命名规则，并要求继续开发。
@@ -9,7 +9,7 @@
 - 适用原则：[P1、P2、P3、P4、P6、P7、P8](../principles/README.md)
 - 替代：[ADR-0001](ADR-0001-generated-step-context.md)、[ADR-0002](ADR-0002-unified-composite-step.md)
 - 修订：[ADR-0003](ADR-0003-function-declared-leaf-steps.md) 中“Composite 保持对象模型”“Composite 自动生成 Pipeline”和 Logger category 只含当前节点名的条款；ADR-0003 的函数式 Leaf、参数分类、返回形状、Logger 创建时机与方法身份条款继续有效
-- 被替代：无
+- 被替代：[ADR-0005](ADR-0005-named-composite-functions.md)
 
 ## 决策摘要
 

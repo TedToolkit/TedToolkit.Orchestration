@@ -137,7 +137,7 @@ public partial class ExecutorGeneratorTests
             """);
         await NoErrors(generated);
         await Assert.That(generated.Compilation.GetTypeByMetadataName("Example")!
-            .GetMembers("__TedToolkitExecuteCompositeStep").Length).IsEqualTo(1);
+            .GetMembers("Configuration").Length).IsEqualTo(2);
         await Assert.That(generated.Diagnostics.Any(item =>
             item.Id is "TTP014" or "TTP015" or "TTP017")).IsFalse();
     }

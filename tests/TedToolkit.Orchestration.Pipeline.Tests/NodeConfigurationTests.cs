@@ -171,7 +171,7 @@ public partial class ExecutorGeneratorTests
             """ + AsyncScenario("""
                 var state = new State();
                 using var services = new ServiceCollection().AddSingleton(state).BuildServiceProvider();
-                try { await new Example.ConfigurationPipeline(services).ExecuteWithoutResultsAsync(); return "unexpected"; }
+                try { await new Example.ConfigurationPipeline(services).ExecuteAsync(); return "unexpected"; }
                 catch (InvalidOperationException error) { return $"{error.Message}:{state.DependentStarted}"; }
                 """));
 
@@ -220,7 +220,7 @@ public partial class ExecutorGeneratorTests
             """ + AsyncScenario("""
                 var state = new State();
                 using var services = new ServiceCollection().AddSingleton(state).BuildServiceProvider();
-                var execution = new Example.ConfigurationPipeline(services).ExecuteWithoutResultsAsync();
+                var execution = new Example.ConfigurationPipeline(services).ExecuteAsync();
                 await state.IndependentStarted.Task;
                 var startedEarly = state.DependentStarted;
                 state.Release.SetResult(1);
@@ -362,7 +362,7 @@ public partial class ExecutorGeneratorTests
             """ + AsyncScenario("""
                 var state = new State();
                 using var services = new ServiceCollection().AddSingleton(state).BuildServiceProvider();
-                var execution = new Example.ConfigurationPipeline(services).ExecuteWithoutResultsAsync();
+                var execution = new Example.ConfigurationPipeline(services).ExecuteAsync();
                 await Task.WhenAll(state.FirstStarted.Task, state.SecondStarted.Task);
                 state.ReleaseFirst.SetResult();
                 await state.FirstCompleted.Task;

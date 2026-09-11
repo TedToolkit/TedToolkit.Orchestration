@@ -15,7 +15,7 @@ public partial class ExecutorGeneratorTests
         var owner = generated.Compilation.GetTypeByMetadataName("Example")!;
         await Assert.That(owner.GetMembers("Execute").Length).IsEqualTo(0);
         await Assert.That(owner.GetTypeMembers("ConfigurationPipeline").Length).IsEqualTo(0);
-        await Assert.That(owner.GetMembers("__TedToolkitExecuteCompositeStep").Length).IsEqualTo(1);
+        await Assert.That(owner.GetMembers("Configuration").Length).IsEqualTo(2);
     }
 
     [Test]
@@ -30,7 +30,7 @@ public partial class ExecutorGeneratorTests
             """);
         await NoErrors(generated);
         var owner = generated.Compilation.GetTypeByMetadataName("Example")!;
-        await Assert.That(owner.GetMembers("__TedToolkitExecuteCompositeStep").Length).IsEqualTo(1);
+        await Assert.That(owner.GetMembers("Configuration").Length).IsEqualTo(2);
         await Assert.That(owner.BaseType!.SpecialType).IsEqualTo(Microsoft.CodeAnalysis.SpecialType.System_Object);
     }
 }

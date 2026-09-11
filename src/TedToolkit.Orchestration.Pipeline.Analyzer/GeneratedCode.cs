@@ -25,12 +25,6 @@ internal static class GeneratedCode
         type.TypeKind == TypeKind.Dynamic
             ? DataType.FromType(typeof(object))
             : (render ?? Type)(type.WithNullableAnnotation(NullableAnnotation.NotAnnotated));
-    internal static (string Name, DataType ReturnType) ExecutionSignature(
-        bool asynchronous, bool discardResults) =>
-        ((discardResults ? "ExecuteWithoutResults" : "Execute") + (asynchronous ? "Async" : ""),
-            asynchronous
-                ? discardResults ? DataType.Task : DataType.TaskOf(new DataType("Results"))
-                : discardResults ? DataType.Void : new DataType("Results"));
     internal static InvocationExpression Call(string name, params IExpression[] arguments) => Name(name).Invoke(arguments);
     internal static InvocationExpression Call(IExpression target, params IExpression[] arguments) => target.Invoke(arguments);
     internal static ObjectCreationExpression New(DataType type, params IExpression[] arguments) => type.New.AddArguments(arguments);

@@ -40,7 +40,7 @@ public partial class ExecutorGeneratorTests
                     .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
                 using var scope = root.CreateScope();
                 var executor = new Example.ConfigurationPipeline(scope.ServiceProvider);
-                """ + (discardResults ? "await executor.ExecuteWithoutResultsAsync();" : "await executor.ExecuteAsync();") + """
+                await executor.ExecuteAsync();
                 return scope.ServiceProvider.GetRequiredKeyedService<Sink>("sink").Text;
                 """));
         await Assert.That(result).IsEqualTo("ordinary:ordinary:named:empty:escaped");
@@ -67,7 +67,7 @@ public partial class ExecutorGeneratorTests
                 using var services = new ServiceCollection().AddSingleton(new Service()).BuildServiceProvider();
                 var executor = new Example.ConfigurationPipeline(services);
                 try {
-                """ + (discardResults ? "executor.ExecuteWithoutResults();" : "executor.Execute();") + """
+                executor.Execute();
                 } catch (InvalidOperationException) { return "missing"; }
                 return "incorrect fallback";
                 """));

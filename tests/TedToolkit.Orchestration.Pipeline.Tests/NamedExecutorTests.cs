@@ -51,8 +51,8 @@ public partial class ExecutorGeneratorTests
                 var executor = new Example.ConfigurationPipeline(services);
                 var first = await executor.ExecuteAsync(fixedValue: 2, loadValue: 40);
                 var second = await executor.ExecuteAsync(fixedValue: 2, loadValue: 8);
-                await executor.ExecuteWithoutResultsAsync(fixedValue: 2, loadValue: 3);
-                return $"{first.Load}:{first.Sum}:{second.Sum}:{sink.Value}:{sink.Calls}:{typeof(Example.Results).IsValueType}:{typeof(StepGraph).IsValueType}";
+                await executor.ExecuteAsync(fixedValue: 2, loadValue: 3);
+                return $"{first.Load}:{first.Sum}:{second.Sum}:{sink.Value}:{sink.Calls}:{typeof(Example.ConfigurationResult).IsValueType}:{typeof(StepGraph).IsValueType}";
                 """));
         await Assert.That(result).IsEqualTo("40:42:10:5:6:True:True");
     }
@@ -142,7 +142,7 @@ public partial class ExecutorGeneratorTests
                 public static void Configuration(StepGraph pipeline) {} }
             """ + AsyncScenario("""
                 var e = new Empty.ConfigurationPipeline();
-                e.Execute(); e.ExecuteWithoutResults();
+                e.Execute();
                 return "done";
                 """));
         await Assert.That(result).IsEqualTo("done");
@@ -160,9 +160,9 @@ public partial class ExecutorGeneratorTests
             }
             """ + AsyncScenario("""
                 var sink = new Sink(); var executor = new Example.ConfigurationPipeline();
-                for (var i = 0; i < 1000; i++) executor.ExecuteWithoutResults(i, sink);
+                for (var i = 0; i < 1000; i++) executor.Execute(i, sink);
                 var before = GC.GetAllocatedBytesForCurrentThread();
-                for (var i = 0; i < 1000; i++) executor.ExecuteWithoutResults(i, sink);
+                for (var i = 0; i < 1000; i++) executor.Execute(i, sink);
                 var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
                 await Task.CompletedTask;
                 return $"{allocated}:{sink.Value}";
@@ -189,7 +189,7 @@ public partial class ExecutorGeneratorTests
                 if (MODE == 2) return $"{actual is OperationCanceledException}:{actual is OperationCanceledException canceled && canceled.CancellationToken == cancellation.Token}";
                 return $"{(actual is OperationCanceledException) == (MODE == 1)}:{ReferenceEquals(expected, actual)}";
             }
-            """.Replace("MODE", mode.ToString()).Replace("METHOD", discard ? "ExecuteWithoutResults" : "Execute");
+            """.Replace("MODE", mode.ToString()).Replace("METHOD", "Execute");
         var result = await Run("""
             internal static class FailSteps { [Step] internal static void Fail(Exception error, CancellationToken token) => throw error; }
             public static partial class Example

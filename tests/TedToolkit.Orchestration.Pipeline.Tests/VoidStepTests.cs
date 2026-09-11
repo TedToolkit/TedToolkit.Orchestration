@@ -60,7 +60,7 @@ public class VoidStepTests
                 {
                     public static Task Run(Func<CancellationToken, Task> operation, CancellationToken token)
                     {
-                        return new EffectPipeline.ConfigurationPipeline().ExecuteWithoutResultsAsync(operation, token);
+                        return new EffectPipeline.ConfigurationPipeline().ExecuteAsync(operation, token);
                     }
                 }
                 """);

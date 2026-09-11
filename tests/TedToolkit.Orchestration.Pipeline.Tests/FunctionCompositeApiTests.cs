@@ -3,6 +3,38 @@ namespace TedToolkit.Orchestration.Pipeline.Tests;
 public partial class ExecutorGeneratorTests
 {
     [Test]
+    public async Task ArbitraryCompositeFunctionNameGeneratesMatchingPipelineClass()
+    {
+        var value = await Run("""
+            internal static class MathSteps
+            {
+                [Step]
+                internal static int Add(int left, int right, CancellationToken token = default) => left + right;
+            }
+
+            public static partial class Flow
+            {
+                [Pipeline]
+                public static void Import(StepGraph steps, int value)
+                {
+                    var total = steps.Add(value, 2);
+                }
+            }
+
+            public static class Scenario
+            {
+                public static Task<string> Run()
+                {
+                    var result = new Flow.ImportPipeline().Execute(40);
+                    return Task.FromResult(result.Total.ToString());
+                }
+            }
+            """);
+
+        await Assert.That(value).IsEqualTo("42");
+    }
+
+    [Test]
     public async Task FunctionCompositeProjectsInputsServicesAndPipelineFacade()
     {
         var value = await Run("""
@@ -374,7 +406,7 @@ public partial class ExecutorGeneratorTests
 
             public static partial class Inner
             {
-                public static void Configuration(StepGraph steps)
+                public static void Build(StepGraph steps)
                 {
                     var save = steps.Save().WithDisplayName("Save");
                 }
@@ -385,7 +417,7 @@ public partial class ExecutorGeneratorTests
                 [Pipeline]
                 public static void Configuration(StepGraph steps)
                 {
-                    var import = steps.Inner().WithDisplayName("Import");
+                    var import = steps.Build().WithDisplayName("Import");
                 }
             }
 

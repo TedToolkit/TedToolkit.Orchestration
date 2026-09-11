@@ -38,8 +38,7 @@ internal static class PipelineFacadeEmitter
         MethodDeclarationSyntax declaration)
     {
         var facade = CreateFacade(factory.Callable, factory.RequiresServices);
-        facade.AddMember(LeafMethod(factory, discardResults: false));
-        facade.AddMember(LeafMethod(factory, discardResults: true));
+        facade.AddMember(LeafMethod(factory));
         return RenderOwner(compilation, factory.Callable, declaration, facade);
     }
 
@@ -47,8 +46,7 @@ internal static class PipelineFacadeEmitter
         bool asynchronous, bool requiresServices)
     {
         var facade = CreateFacade(configuration, requiresServices);
-        facade.AddMember(CompositeMethod(configuration, asynchronous, requiresServices, false));
-        facade.AddMember(CompositeMethod(configuration, asynchronous, requiresServices, true));
+        facade.AddMember(CompositeMethod(configuration, asynchronous, requiresServices));
         return facade;
     }
 
@@ -75,17 +73,16 @@ internal static class PipelineFacadeEmitter
         return facade;
     }
 
-    private static Method LeafMethod(StepFactory factory, bool discardResults)
+    private static Method LeafMethod(StepFactory factory)
     {
         var asynchronous = !factory.IsSynchronous;
         var returnType = asynchronous
-            ? discardResults || factory.Result is null ? DataType.Task : TaskOf(factory.Result)
-            : discardResults || factory.Result is null ? DataType.Void : Type(factory.Result);
+            ? factory.Result is null ? DataType.Task : TaskOf(factory.Result)
+            : factory.Result is null ? DataType.Void : Type(factory.Result);
         var method = new Method(
-            (discardResults ? "ExecuteWithoutResults" : "Execute") + (asynchronous ? "Async" : ""),
-            new ReturnType(returnType)).Public.AddRootDescription(Summary(discardResults
-                ? "Executes the root Step without collecting its result."
-                : "Executes the root Step and returns its result."));
+            "Execute" + (asynchronous ? "Async" : ""),
+            new ReturnType(returnType)).Public.AddRootDescription(
+                Summary("Executes the root Step and returns its result."));
         method.IsAsync = asynchronous;
         AddDataParameters(method, factory.Parameters);
         var token = factory.Callable.Parameters.Single(StepSymbols.IsCancellationToken);
@@ -135,7 +132,7 @@ internal static class PipelineFacadeEmitter
         IExpression call = Call(Name(StepSymbols.TypeName(factory.Type)).Sub(factory.Callable.Name),
             arguments.ToArray());
         if (asynchronous) call = Await(call);
-        if (factory.Result is null || discardResults)
+        if (factory.Result is null)
             method.AddStatement(call);
         else
         {
@@ -150,16 +147,16 @@ internal static class PipelineFacadeEmitter
     }
 
     private static Method CompositeMethod(IMethodSymbol configuration, bool asynchronous,
-        bool requiresServices, bool discardResults)
+        bool requiresServices)
     {
+        var resultType = new DataType(CompositeStepGenerator.ResultTypeName(configuration));
         var returnType = asynchronous
-            ? discardResults ? DataType.Task : DataType.TaskOf(new DataType("Results"))
-            : discardResults ? DataType.Void : new DataType("Results");
+            ? DataType.TaskOf(resultType)
+            : resultType;
         var method = new Method(
-            (discardResults ? "ExecuteWithoutResults" : "Execute") + (asynchronous ? "Async" : ""),
-            new ReturnType(returnType)).Public.AddRootDescription(Summary(discardResults
-                ? "Executes the root graph without collecting results."
-                : "Executes the root graph and returns its typed results."));
+            "Execute" + (asynchronous ? "Async" : ""),
+            new ReturnType(returnType)).Public.AddRootDescription(
+                Summary("Executes the root graph and returns its typed results."));
         var data = configuration.Parameters.Skip(1).Where(parameter =>
             !StepSymbols.IsService(parameter) && !StepSymbols.IsCancellationToken(parameter)).ToArray();
         AddDataParameters(method, data);
@@ -169,21 +166,46 @@ internal static class PipelineFacadeEmitter
         var tokenName = declaredToken?.Name ?? names.Allocate("cancellationToken");
         method.AddParameter(new Parameter(typeof(System.Threading.CancellationToken), tokenName)
             .AddDefault(SimpleNameExpression.Default));
-        var prepareArguments = new List<IExpression>();
-        if (requiresServices) prepareArguments.Add(Name("this._services"));
-        prepareArguments.Add(configuration.ContainingType.Name.ToLiteral());
-        var stateName = names.Allocate("__state");
-        method.AddStatement(Variable(stateName, Call(
-            Name(StepSymbols.TypeName(configuration.ContainingType)).Sub(CompositeStepGenerator.PrepareProtocolName),
-            prepareArguments.ToArray())));
-        var executeArguments = new List<IExpression> { Name(stateName) };
-        executeArguments.AddRange(data.Select(parameter => (IExpression)Name(parameter.Name)));
+        var executeArguments = new List<IExpression>();
+        if (requiresServices) executeArguments.Add(Name("this._services"));
+        executeArguments.Add(configuration.ContainingType.Name.ToLiteral());
+        var serviceArguments = new Dictionary<IParameterSymbol, IExpression>(
+            SymbolEqualityComparer.Default);
+        foreach (var parameter in configuration.Parameters.Where(StepSymbols.IsService))
+        {
+            if (IsSpecialLogger(parameter)) continue;
+            var serviceName = names.Allocate("__service" + parameter.Ordinal);
+            var runtimeType = ServiceLookupType(parameter.Type);
+            var key = StepSymbols.ServiceAttribute(parameter)?.ConstructorArguments.FirstOrDefault().Value as string;
+            method.AddStatement(Variable(serviceName, ResolveService(runtimeType, key), Type(parameter.Type)));
+            serviceArguments.Add(parameter, Name(serviceName));
+        }
+        var loggers = configuration.Parameters.Where(IsSpecialLogger).ToArray();
+        if (loggers.Length != 0)
+        {
+            var loggerFactoryType = new DataType("global::Microsoft.Extensions.Logging.ILoggerFactory");
+            var loggerFactoryName = names.Allocate("__loggerFactory");
+            var loggerName = names.Allocate("__logger");
+            method.AddStatement(Variable(loggerFactoryName,
+                ResolveService(loggerFactoryType, null), loggerFactoryType));
+            method.AddStatement(Variable(loggerName,
+                Call(Name(loggerFactoryName).Sub("CreateLogger"),
+                    (configuration.ContainingType.ToDisplayString() + "." + configuration.Name +
+                        "[" + configuration.ContainingType.Name + "]").ToLiteral()),
+                new DataType("global::Microsoft.Extensions.Logging.ILogger")));
+            foreach (var logger in loggers)
+                serviceArguments.Add(logger, Name(loggerName));
+        }
+        foreach (var parameter in configuration.Parameters.Skip(1).Where(parameter =>
+            !StepSymbols.IsCancellationToken(parameter)))
+            executeArguments.Add(StepSymbols.IsService(parameter)
+                ? serviceArguments[parameter]
+                : Name(parameter.Name));
         executeArguments.Add(Name(tokenName));
         IExpression call = Call(
-            Name(StepSymbols.TypeName(configuration.ContainingType)).Sub(CompositeStepGenerator.ExecuteProtocolName),
+            Name(StepSymbols.TypeName(configuration.ContainingType)).Sub(configuration.Name),
             executeArguments.ToArray());
-        if (asynchronous || !discardResults) method.AddStatement(call.Return);
-        else method.AddStatement(call);
+        method.AddStatement(call.Return);
         return method;
     }
 
@@ -207,6 +229,11 @@ internal static class PipelineFacadeEmitter
             : Call("global::Microsoft.Extensions.DependencyInjection.ServiceProviderKeyedServiceExtensions.GetRequiredKeyedService",
                 provider, Call("typeof", type.Type), key.ToLiteral()).Cast(type);
     }
+
+    private static bool IsSpecialLogger(IParameterSymbol parameter) =>
+        StepSymbols.IsService(parameter) &&
+        StepSymbols.ServiceAttribute(parameter)?.ConstructorArguments.FirstOrDefault().Value is not string &&
+        parameter.Type.ToDisplayString() == "Microsoft.Extensions.Logging.ILogger";
 
     private static string RenderOwner(Compilation compilation, IMethodSymbol method,
         MethodDeclarationSyntax source, TypeDeclaration member)

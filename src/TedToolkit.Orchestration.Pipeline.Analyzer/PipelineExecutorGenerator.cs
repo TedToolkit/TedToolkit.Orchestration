@@ -16,7 +16,7 @@ public sealed class PipelineExecutorGenerator : IIncrementalGenerator
     {
         var methods = context.SyntaxProvider.CreateSyntaxProvider(
             static (node, _) => node is MethodDeclarationSyntax method &&
-                (method.Identifier.ValueText == "Configuration" || method.AttributeLists.Count != 0),
+                (method.ParameterList.Parameters.Count != 0 || method.AttributeLists.Count != 0),
             static (syntax, _) => (MethodDeclarationSyntax)syntax.Node).Collect();
 
         var comparedResults = context.CompilationProvider

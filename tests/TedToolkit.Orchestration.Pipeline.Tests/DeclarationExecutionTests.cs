@@ -106,7 +106,7 @@ public partial class ExecutorGeneratorTests
                 var first = state.LastValue;
                 await pipeline.METHOD(state);
                 return $"{before}:{first}:{state.LastValue}:{state.Evaluations}:{state.Attempts}";
-                """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")));
+                """.Replace("METHOD", "ExecuteAsync")));
         await Assert.That(result).IsEqualTo("0:1:2:2:4");
     }
 
@@ -219,11 +219,12 @@ public partial class ExecutorGeneratorTests
             }
             """);
         await NoErrors(generated);
-        await Assert.That(generated.GeneratedSource.Contains("Configuration(") || generated.GeneratedSource.Contains("IConfiguration") ||
-            generated.GeneratedSource.Contains("_capture") || generated.GeneratedSource.Contains("GetFixedValue")).IsFalse();
+        await Assert.That(generated.GeneratedSource.Contains("IConfiguration") ||
+            generated.GeneratedSource.Contains("_capture") ||
+            generated.GeneratedSource.Contains("GetFixedValue")).IsFalse();
         await Assert.That(generated.GeneratedSource.Contains(
             "global::AddStepMethods.Add(40, 2, executionToken)")).IsTrue();
-        await Assert.That(generated.GeneratedSource.Contains("RunSum0(")).IsTrue();
+        await Assert.That(generated.GeneratedSource.Contains("Run13_Configuration_3_Sum_0(")).IsTrue();
     }
 }
 

@@ -8,9 +8,10 @@ namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 
 internal static class ResultsEmitter
 {
-    internal static TypeDeclaration Create(IReadOnlyList<GraphNode> nodes, bool isPublic = true)
+    internal static TypeDeclaration Create(
+        string name, IReadOnlyList<GraphNode> nodes, bool isPublic = true)
     {
-        var result = new TypeDeclaration("Results", TypeDeclarationType.STRUCT)
+        var result = new TypeDeclaration(name, TypeDeclarationType.STRUCT)
             .Readonly
             .AddRootDescription(Summary("Contains the typed results produced by this Composite Step."));
         _ = isPublic ? result.Public : result.Internal;

@@ -84,7 +84,7 @@ public partial class ExecutorGeneratorTests
             """ + AsyncScenario("""
                 var pipeline = new Example.ConfigurationPipeline();
                 var first = pipeline.Execute(10);
-                pipeline.ExecuteWithoutResults(20);
+                pipeline.Execute(20);
                 return $"{first.Sum}:{Example.Evaluations}";
                 """));
         await Assert.That(result).IsEqualTo("12:2");

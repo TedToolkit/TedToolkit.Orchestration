@@ -50,7 +50,7 @@ public class ValueSyncBenchmarks
         
     }
 
-    [Benchmark] public void Generated() => _runner.ExecuteWithoutResults(1024, _sink);
+    [Benchmark] public void Generated() => _ = _runner.Execute(1024, _sink);
 }
 
 public class ValueAsyncBenchmarks
@@ -87,7 +87,7 @@ public class ValueAsyncBenchmarks
         token.ThrowIfCancellationRequested();
     }
 
-    [Benchmark] public Task Generated() => _runner.ExecuteWithoutResultsAsync(1024, _sink, Mode);
+    [Benchmark] public Task Generated() => _runner.ExecuteAsync(1024, _sink, Mode);
 }
 
 internal static partial class SyncValuePipeline

@@ -10,13 +10,22 @@ namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 // Each registration owns argument evaluation and direct business-function attempts.
 internal static class StepExecutionEmitter
 {
-    private const string SupportType =
+    private const string SUPPORT_TYPE =
         "global::TedToolkit.Orchestration.Pipeline.CompilerServices.PipelineExecutionSupport";
 
-    internal static string MethodName(GraphNode node, bool parallel = false) => "Run" + GraphReader.Capitalize(node.Name) + node.Index + (node.Factory.IsSynchronous && !parallel ? "" : "Async");
+    internal static string MethodName(GraphNode node, bool parallel = false, string? ownerMethod = null)
+    {
+        var nodeName = GraphReader.Capitalize(node.Name);
+        var identity = ownerMethod is null
+            ? nodeName.Length + "_" + nodeName
+            : ownerMethod.Length + "_" + ownerMethod + "_" + nodeName.Length + "_" + nodeName;
+        return "Run" + identity + "_" + node.Index +
+            (node.Factory.IsSynchronous && !parallel ? "" : "Async");
+    }
 
     internal static Method CreateRun(GraphNode node, bool parallel, bool staticCore = false,
-        IReadOnlyList<IParameterSymbol>? rootInputs = null, bool hierarchicalDisplayPath = false)
+        IReadOnlyList<IParameterSymbol>? rootInputs = null, bool hierarchicalDisplayPath = false,
+        string? ownerMethod = null)
     {
         var factory = node.Factory;
         var policy = node.RetryCount != 0 || node.TimeoutMilliseconds != -1;
@@ -24,7 +33,7 @@ internal static class StepExecutionEmitter
         var resultType = factory.IsSynchronous && !parallel
             ? factory.Result is null ? DataType.Void : factory.GeneratedType(factory.Result)
             : factory.GeneratedTaskType(factory.Result);
-        var method = new Method(MethodName(node, parallel), new ReturnType(resultType)).Private;
+        var method = new Method(MethodName(node, parallel, ownerMethod), new ReturnType(resultType)).Private;
         if (staticCore) _ = method.Static;
         method.IsAsync = !directTask && (parallel || !factory.IsSynchronous);
         if (staticCore)
@@ -72,7 +81,7 @@ internal static class StepExecutionEmitter
         if (policy)
         {
             var lifetime = new UsingStatement(Variable("attempt", New(new DataType(
-                    SupportType + ".StepAttempt"),
+                    SUPPORT_TYPE + ".StepAttempt"),
                 node.RetryCount.ToLiteral(), node.TimeoutMilliseconds.ToLiteral(), Name("executionToken"))));
             method.AddStatement(lifetime);
             var loop = new GeneratedBlock(Call("attempt.Begin"));
@@ -102,7 +111,7 @@ internal static class StepExecutionEmitter
             guard.Statements.AddRange(method.Statements);
             method.Statements.Clear();
             var cancellation = new TryStatement();
-            cancellation.AddStatement(Await(Call(SupportType + ".CancelExecutionAsync", Name("__execution"))));
+            cancellation.AddStatement(Await(Call(SUPPORT_TYPE + ".CancelExecutionAsync", Name("__execution"))));
             cancellation.AddCatch(new CatchClause(typeof(System.Exception)));
             guard.AddCatch(new CatchClause(typeof(System.Exception))
                 .AddStatement(cancellation).AddStatement(new ThrowExpression()));
@@ -132,15 +141,12 @@ internal static class StepExecutionEmitter
 
         if (factory.IsComposite)
         {
-            var compositeArguments = CompositeArguments(node).ToArray();
-            var prepareArguments = new List<IExpression>();
+            var compositeArguments = CompositeArguments(method, node, staticCore,
+                stepPath!, factory).ToList();
             if (factory.RequiresServices)
-                prepareArguments.Add(Name(staticCore ? "__services" : "_services"));
-            prepareArguments.Add(Name(stepPath!));
-            method.AddStatement(Variable("__compositeState", Call(
-                Name(factory.TypeName(factory.Type)).Sub(CompositeStepGenerator.PrepareProtocolName),
-                prepareArguments.ToArray())));
-            return compositeArguments;
+                compositeArguments.Insert(0, Name(staticCore ? "__services" : "_services"));
+            compositeArguments.Insert(factory.RequiresServices ? 1 : 0, Name(stepPath!));
+            return compositeArguments.ToArray();
         }
 
         var arguments = InvocationArguments(node, staticCore).ToArray();
@@ -192,11 +198,10 @@ internal static class StepExecutionEmitter
         IExpression call;
         if (factory.IsComposite)
         {
-            var compositeArguments = new List<IExpression> { Name("__compositeState") };
-            compositeArguments.AddRange(arguments);
+            var compositeArguments = new List<IExpression>(arguments);
             compositeArguments.Add(Name(token));
             call = Call(Name(factory.TypeName(factory.Type)).Sub(
-                CompositeStepGenerator.ExecuteProtocolName), compositeArguments.ToArray());
+                factory.Callable.Name), compositeArguments.ToArray());
         }
         else
         {
@@ -207,7 +212,7 @@ internal static class StepExecutionEmitter
         }
         if (directTask)
         {
-            body.AddStatement(Call(SupportType + ".ObserveStepAsync", call, Name(token)).Return);
+            body.AddStatement(Call(SUPPORT_TYPE + ".ObserveStepAsync", call, Name(token)).Return);
             return;
         }
         if (!factory.IsSynchronous)
@@ -256,13 +261,54 @@ internal static class StepExecutionEmitter
         }
     }
 
-    private static IEnumerable<IExpression> CompositeArguments(GraphNode node)
+    private static IEnumerable<IExpression> CompositeArguments(Method method, GraphNode node,
+        bool staticCore, string stepPath, StepFactory factory)
     {
-        for (var index = 0; index < node.Factory.Parameters.Length; index++)
+        var dataIndex = 0;
+        string? loggerName = null;
+        for (var index = 0; index < factory.RuntimeInputs.Length; index++)
         {
-            var binding = node.Arguments[index];
-            yield return binding.Source is not null ? Name("__input" + index) :
-                binding.IsConstant ? binding.Expression! : Name("__value" + index);
+            var parameter = factory.RuntimeInputs[index];
+            if (StepSymbols.IsService(parameter))
+            {
+                if (factory.IsSpecialLogger(parameter))
+                {
+                    if (loggerName is null)
+                    {
+                        var loggerFactoryType = new DataType("global::Microsoft.Extensions.Logging.ILoggerFactory");
+                        var loggerFactory = Call(
+                            "global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService",
+                            Name(staticCore ? "__services" : "_services"),
+                            Call("typeof", loggerFactoryType.Type)).Cast(loggerFactoryType);
+                        method.AddStatement(Variable("__loggerFactory", loggerFactory, loggerFactoryType));
+                        loggerName = "__logger";
+                        method.AddStatement(Variable(loggerName,
+                            Call(Name("__loggerFactory").Sub("CreateLogger"),
+                                (factory.Identity + "[").ToLiteral().Add(Name(stepPath)).Add("]".ToLiteral())),
+                            new DataType("global::Microsoft.Extensions.Logging.ILogger")));
+                    }
+                    yield return Name(loggerName);
+                    continue;
+                }
+
+                var runtimeType = ServiceLookupType(parameter.Type, factory.GeneratedType);
+                var key = StepSymbols.ServiceAttribute(parameter)?.ConstructorArguments.FirstOrDefault().Value as string;
+                var resolve = key is null
+                    ? Call("global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService",
+                        Name(staticCore ? "__services" : "_services"), Call("typeof", runtimeType.Type))
+                    : Call("global::Microsoft.Extensions.DependencyInjection.ServiceProviderKeyedServiceExtensions.GetRequiredKeyedService",
+                        Name(staticCore ? "__services" : "_services"), Call("typeof", runtimeType.Type), key.ToLiteral());
+                var serviceName = "__service" + index;
+                method.AddStatement(Variable(serviceName, resolve.Cast(factory.GeneratedType(parameter.Type)),
+                    factory.GeneratedType(parameter.Type)));
+                yield return Name(serviceName);
+                continue;
+            }
+
+            var binding = node.Arguments[dataIndex];
+            yield return binding.Source is not null ? Name("__input" + dataIndex) :
+                binding.IsConstant ? binding.Expression! : Name("__value" + dataIndex);
+            dataIndex++;
         }
     }
 }

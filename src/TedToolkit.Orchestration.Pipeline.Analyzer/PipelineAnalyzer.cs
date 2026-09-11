@@ -23,7 +23,7 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
         context.EnableConcurrentExecution();
         context.RegisterCompilationStartAction(start =>
         {
-            if (start.Compilation.GetTypeByMetadataName(StepSymbols.StepAttributeName) is null) return;
+            if (start.Compilation.GetTypeByMetadataName(StepSymbols.STEP_ATTRIBUTE_NAME) is null) return;
             start.RegisterSymbolAction(AnalyzeStep, SymbolKind.Method);
             start.RegisterOperationAction(AnalyzeInvocation, OperationKind.Invocation);
         });
@@ -52,7 +52,7 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 PipelineDiagnostics.InvalidPipeline, method.Locations[0], method.Name,
-                "Pipeline can mark only a valid Step or Configuration method"));
+                "Pipeline can mark only a valid Step or Composite declaration method"));
             return;
         }
         var pipelineReason = PipelineFacadeEmitter.ContractError(method);
@@ -65,7 +65,7 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
     {
         var invocation = (IInvocationOperation)context.Operation;
         var method = invocation.TargetMethod;
-        if (PipelineSymbols.IsCompositeConfiguration(method, context.Compilation))
+        if (PipelineSymbols.IsCompositeDeclaration(method, context.Compilation))
         {
             context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.ConfigurationInvocation,
                 invocation.Syntax.GetLocation(), method.Name));
@@ -74,7 +74,7 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
         if (PipelineSymbols.IsStepFactory(method, context.Compilation))
         {
             if (context.ContainingSymbol is not IMethodSymbol caller ||
-                !PipelineSymbols.IsCompositeConfiguration(caller, context.Compilation))
+                !PipelineSymbols.IsCompositeDeclaration(caller, context.Compilation))
                 context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.FactoryOutsideConfiguration,
                     invocation.Syntax.GetLocation(), method.Name));
             return;
@@ -82,7 +82,7 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
         if (PipelineSymbols.IsStepModifier(method, context.Compilation))
         {
             if (context.ContainingSymbol is not IMethodSymbol caller ||
-                !PipelineSymbols.IsCompositeConfiguration(caller, context.Compilation))
+                !PipelineSymbols.IsCompositeDeclaration(caller, context.Compilation))
                 context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.ModifierOutsideConfiguration,
                     invocation.Syntax.GetLocation(), method.Name));
             return;
