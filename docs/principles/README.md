@@ -6,7 +6,7 @@ Scope: the runtime package, generated public surface and bundled analyzer. Owner
 
 Status: Active. Strength: Required.
 
-Resolve type compatibility, graph shape, ordering and fixed policy values during generation. Emit direct typed Step construction and execution, with graph-independent policy helpers in the Runtime compiler-support contract; avoid runtime graph interpretation, reflection-based activation and interface boxing in execution. This keeps composition conveniences out of the hot path. Review whenever a new runtime abstraction is proposed.
+Resolve type compatibility, graph shape, ordering and fixed policy values during generation. Emit direct typed Step invocation, with graph-independent policy helpers in the Runtime compiler-support contract; avoid runtime graph interpretation, reflection-based activation and interface boxing in execution. This keeps composition conveniences out of the hot path. Review whenever a new runtime abstraction is proposed.
 
 ## P2 - Pay only for enabled capabilities
 
@@ -18,7 +18,7 @@ Fully synchronous graphs use direct synchronous calls. Linear chains use direct 
 
 Status: Active. Strength: Default.
 
-Use stack-only step values and immutable argument/marker values where their lifetimes permit. Avoid hiding allocations through object/interface storage or captures. Step identity belongs to the compile-time graph: a marker alias preserves its source and a new registration creates a distinct source. The shared Builder and argument markers are empty readonly values; builder aliases and escape are rejected by the generator. Configuration is source-only. Each Step method retains evaluated arguments in local variables for reuse across retries; only explicit legacy constructor inputs require pipeline fields. Avoid introducing runtime graph collections when configuration can be resolved during generation.
+Use immutable argument/marker values where their lifetimes permit. Leaf Steps are static functions rather than runtime Step objects. Avoid hiding allocations through object/interface storage or captures. Step identity belongs to the compile-time graph: a marker alias preserves its source and a new registration creates a distinct source. The shared Builder and argument markers are empty readonly values; builder aliases and escape are rejected by the generator. Configuration is source-only. Generated execution retains evaluated arguments in local variables for reuse across retries. Avoid introducing runtime graph collections when configuration can be resolved during generation.
 
 ## P4 - Generate inspectable execution code
 
@@ -44,9 +44,9 @@ This protects type safety and keeps source order, dependency identity, retry sem
 
 Status: Active. Strength: Required. Owner: library maintainers. Approved by the user on 2026-09-05. Review whenever the pipeline would retain services, Steps, tasks or cleanup ownership beyond one invocation.
 
-The caller owns the service provider, service scope and invocation cancellation boundary. A Step owns only one attempt; asynchronous work owns the state and cleanup it needs until its returned Task completes. The generated executor drains all work it starts before the invocation completes. Resolve services per Step invocation without disposing them, construct a fresh Step for every retry, finish synchronous disposal before retrying, and keep asynchronous cleanup inside the returned operation.
+The caller owns the service provider, service scope and invocation cancellation boundary. A Leaf function invocation owns one attempt; asynchronous work owns the state and cleanup it needs until its returned Task completes. The generated executor drains all work it starts before the invocation completes. Resolve services once per node invocation without disposing them, call the Leaf function for every retry, finish function-owned synchronous cleanup before retrying, and keep asynchronous cleanup inside the returned operation.
 
-This prevents leaks, use-after-dispose failures, orphaned work and ambiguous cancellation while respecting ref-struct lifetimes. Cancellation remains cooperative and does not imply forced termination of synchronous code. Any framework-owned service scope, retained Step instance, detached background task or invocation-surviving execution state requires an accepted ADR and a product-intent review.
+This prevents leaks, use-after-dispose failures, orphaned work and ambiguous cancellation. Cancellation remains cooperative and does not imply forced termination of synchronous code. Any framework-owned service scope, retained execution facade, detached background task or invocation-surviving execution state requires an accepted ADR and a product-intent review.
 
 ## P8 - Generate only consumer-dependent code
 

@@ -7,19 +7,20 @@ public partial class ExecutorGeneratorTests
     public async Task UncancelablePolicyFreeStepsPreserveTheBusinessResult(bool completed)
     {
         var result = await Run("""
-            internal readonly ref partial struct Work(Task<int> operation) : IAsyncStep<int>
+            internal static class WorkStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) => operation;
+                [Step]
+                internal static Task<int> Work(Task<int> operation, CancellationToken token) => operation;
             }
-            [CompositeStep]
-            public readonly ref partial struct Example(Task<int> operation)
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { var work = p.Work(operation); }
+                [Pipeline]
+                public static void Configuration(StepGraph p, Task<int> operation) { var work = p.Work(operation); }
             }
             """ + AsyncScenario("""
                 var pending = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
                 Task<int> task = COMPLETED ? Task.FromResult(42) : pending.Task;
-                var execution = new Example.Pipeline().ExecuteAsync(task);
+                var execution = new Example.ConfigurationPipeline().ExecuteAsync(task);
                 pending.TrySetResult(42);
                 return $"{await task}:{(await execution).Work}";
                 """.Replace("COMPLETED", completed ? "true" : "false")));
@@ -31,18 +32,18 @@ public partial class ExecutorGeneratorTests
     public async Task PolicyFreeAsyncStepsStillWaitAndPreserveCallerCancellation(bool resultless)
     {
         var step = resultless
-            ? "internal readonly ref partial struct Work(Task operation) : IAsyncStep { public Task ExecuteAsync(CancellationToken token) => operation; }"
-            : "internal readonly ref partial struct Work(Task<int> operation) : IAsyncStep<int> { public Task<int> ExecuteAsync(CancellationToken token) => operation; }";
+            ? "internal static class WorkSteps { [Step] internal static Task Work(Task operation, CancellationToken token) => operation; }"
+            : "internal static class WorkSteps { [Step] internal static Task<int> Work(Task<int> operation, CancellationToken token) => operation; }";
         var result = await Run(step + """
-            [CompositeStep]
-            public readonly ref partial struct Example(Task<int> operation)
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { var work = p.Work(operation); }
+                [Pipeline]
+                public static void Configuration(StepGraph p, Task<int> operation) { var work = p.Work(operation); }
             }
             """ + AsyncScenario("""
                 using var cancellation = new CancellationTokenSource();
                 var release = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-                var execution = new Example.Pipeline().ExecuteAsync(release.Task, cancellation.Token);
+                var execution = new Example.ConfigurationPipeline().ExecuteAsync(release.Task, cancellation.Token);
                 cancellation.Cancel();
                 var early = execution.IsCompleted;
                 release.SetResult(42);

@@ -1,10 +1,12 @@
 namespace TedToolkit.Orchestration.Pipeline.Playground;
 
 /// <summary>Starts an asynchronous operation whose state outlives the stack-only step.</summary>
-internal readonly ref partial struct DelayStep(int value) : IAsyncStep<int>
+internal static class DelayStepMethods
 {
-    /// <inheritdoc />
-    public Task<int> ExecuteAsync(CancellationToken cancellationToken = default) => DelayAsync(value, cancellationToken);
+    /// <summary>Returns the value after a cooperative delay.</summary>
+    [Attributes.Step]
+    internal static Task<int> DelayStep(int value, CancellationToken cancellationToken) =>
+        DelayAsync(value, cancellationToken);
 
     private static async Task<int> DelayAsync(int value, CancellationToken cancellationToken)
     {

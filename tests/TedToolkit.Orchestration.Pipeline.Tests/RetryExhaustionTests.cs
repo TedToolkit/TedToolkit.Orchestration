@@ -9,19 +9,12 @@ public partial class ExecutorGeneratorTests
     [Arguments(true, true)]
     public async Task EveryStepShapePropagatesTheLastFailureAfterRetries(bool asynchronous, bool result)
     {
-        var contract = (asynchronous, result) switch
-        {
-            (false, false) => "IStep",
-            (false, true) => "IStep<int>",
-            (true, false) => "IAsyncStep",
-            _ => "IAsyncStep<int>"
-        };
         var method = (asynchronous, result) switch
         {
-            (false, false) => "public void Execute(CancellationToken token)",
-            (false, true) => "public int Execute(CancellationToken token)",
-            (true, false) => "public Task ExecuteAsync(CancellationToken token)",
-            _ => "public Task<int> ExecuteAsync(CancellationToken token)"
+            (false, false) => "internal static void Fail(State state, CancellationToken token)",
+            (false, true) => "internal static int Fail(State state, CancellationToken token)",
+            (true, false) => "internal static Task Fail(State state, CancellationToken token)",
+            _ => "internal static Task<int> Fail(State state, CancellationToken token)"
         };
         var failure = asynchronous
             ? (result ? "return Task.FromException<int>(state.Last);" : "return Task.FromException(state.Last);")
@@ -36,21 +29,25 @@ public partial class ExecutorGeneratorTests
                 public int Attempts;
                 public InvalidOperationException Last = null!;
             }
-            internal readonly ref partial struct Fail(State state) : CONTRACT
+            internal static class FailStepMethods
             {
+                [Step]
                 METHOD
                 {
                     state.Last = new InvalidOperationException($"attempt {++state.Attempts}");
                     FAILURE
                 }
             }
-            [CompositeStep] public readonly ref partial struct Example(State state) { private void Configuration(StepGraph pipeline) { pipeline.Fail(state).WithRetry(2); } }
-            """.Replace("CONTRACT", contract).Replace("METHOD", method).Replace("FAILURE", failure);
+            public static partial class Example
+            {
+                [Pipeline]
+                public static void Configuration(StepGraph pipeline, State state) { pipeline.Fail(state).WithRetry(2); } }
+            """.Replace("METHOD", method).Replace("FAILURE", failure);
 
         var body = """
             using var services = new ServiceCollection().BuildServiceProvider();
             var state = new State();
-            var pipeline = new Example.Pipeline();
+            var pipeline = new Example.ConfigurationPipeline();
             try { INVOCATION; return SUCCESS; }
             catch (InvalidOperationException exception)
             {
@@ -77,27 +74,29 @@ public partial class ExecutorGeneratorTests
                 public int Cleaned;
                 public InvalidOperationException Last = null!;
             }
-            internal readonly ref partial struct Fail(State state) : IAsyncStep<int>
+            internal static class FailStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token)
+                [Step]
+                internal static Task<int> Fail(State state, CancellationToken token)
                 {
                     state.Last = new InvalidOperationException($"attempt {++state.Attempts}");
                     return Task.FromException<int>(state.Last);
                 }
             }
-            internal readonly ref partial struct Wait(State state) : IAsyncStep<int>
+            internal static class WaitStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) => RunAsync(state, token);
+                [Step]
+                internal static Task<int> Wait(State state, CancellationToken token) => RunAsync(state, token);
                 private static async Task<int> RunAsync(State state, CancellationToken token)
                 {
                     try { await Task.Delay(Timeout.InfiniteTimeSpan, token); return 1; }
                     finally { state.Cleaned++; }
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct Example(State state)
+            public static partial class Example
             {
-                private void Configuration(StepGraph pipeline)
+                [Pipeline]
+                public static void Configuration(StepGraph pipeline, State state)
                 {
                     var wait = pipeline.Wait(state);
                     var fail = pipeline.Fail(state).WithRetry(2);
@@ -105,7 +104,7 @@ public partial class ExecutorGeneratorTests
             }
             """ + AsyncScenario("""
                 var state = new State();
-                try { await new Example.Pipeline().ExecuteAsync(state); return "success"; }
+                try { await new Example.ConfigurationPipeline().ExecuteAsync(state); return "success"; }
                 catch (InvalidOperationException exception)
                 {
                     return $"{ReferenceEquals(exception, state.Last)}:{state.Attempts}:{state.Cleaned}";

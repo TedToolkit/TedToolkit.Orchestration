@@ -10,23 +10,25 @@ public partial class ExecutorGeneratorTests
         var result = await Run("""
             public sealed record Value(string Text);
             public sealed class Sink { public string Text = ""; }
-            internal readonly ref partial struct Read(
-                [FromServices] Value ordinary,
+            internal static class ReadStepMethods
+            {
+                [Step]
+                internal static string Read([FromServices] Value ordinary,
                 [FromServices(key: null)] Value explicitNull,
                 [FromServices(key: "blue")] Value named,
                 [FromServices("")] Value empty,
-                [FromServices("quote\"\\\n键")] Value escaped) : IStep<string>
-            {
-                public string Execute(CancellationToken token) =>
+                [FromServices("quote\"\\\n键")] Value escaped, CancellationToken token) =>
                     $"{ordinary.Text}:{explicitNull.Text}:{named.Text}:{empty.Text}:{escaped.Text}";
             }
-            internal readonly ref partial struct Write(string value, [FromServices("sink")] Sink sink) : IAsyncStep
+            internal static class WriteStepMethods
             {
-                public Task ExecuteAsync(CancellationToken token) { sink.Text = value; return Task.CompletedTask; }
+                [Step]
+                internal static Task Write(string value, [FromServices("sink")] Sink sink, CancellationToken token) { sink.Text = value; return Task.CompletedTask; }
             }
-            [CompositeStep]            public readonly ref partial struct Example
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { var read = p.Read(); p.Write(read); }
+                [Pipeline]
+                public static void Configuration(StepGraph p) { var read = p.Read(); p.Write(read); }
             }
             """ + AsyncScenario("""
                 using var root = new ServiceCollection()
@@ -37,7 +39,7 @@ public partial class ExecutorGeneratorTests
                     .AddKeyedScoped<Sink>("sink", (_, _) => new Sink())
                     .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
                 using var scope = root.CreateScope();
-                var executor = new Example.Pipeline(scope.ServiceProvider);
+                var executor = new Example.ConfigurationPipeline(scope.ServiceProvider);
                 """ + (discardResults ? "await executor.ExecuteWithoutResultsAsync();" : "await executor.ExecuteAsync();") + """
                 return scope.ServiceProvider.GetRequiredKeyedService<Sink>("sink").Text;
                 """));
@@ -51,17 +53,19 @@ public partial class ExecutorGeneratorTests
     {
         var result = await Run("""
             public sealed class Service;
-            internal readonly ref partial struct Read([FromServices("missing")] Service service) : IStep<bool>
+            internal static class ReadStepMethods
             {
-                public bool Execute(CancellationToken token) => service is not null;
+                [Step]
+                internal static bool Read([FromServices("missing")] Service service, CancellationToken token) => service is not null;
             }
-            [CompositeStep]            public readonly ref partial struct Example
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { p.Read(); }
+                [Pipeline]
+                public static void Configuration(StepGraph p) { p.Read(); }
             }
             """ + AsyncScenario("""
                 using var services = new ServiceCollection().AddSingleton(new Service()).BuildServiceProvider();
-                var executor = new Example.Pipeline(services);
+                var executor = new Example.ConfigurationPipeline(services);
                 try {
                 """ + (discardResults ? "executor.ExecuteWithoutResults();" : "executor.Execute();") + """
                 } catch (InvalidOperationException) { return "missing"; }

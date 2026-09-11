@@ -1,6 +1,6 @@
 # ADR-0001：生成 Step 实例上下文
 
-- 状态：Accepted
+- 状态：Superseded
 - 日期：2026-09-08
 - 决策所有者：library maintainers
 - 批准来源：用户于 2026-09-08 在原始 Codex 任务中明确批准，并要求 CS0282 不出现在消费项目中。
@@ -8,7 +8,7 @@
 - 适用产品意图：[Product intent](../product/README.md)
 - 适用原则：[P1、P2、P3、P4、P6、P7](../principles/README.md)
 - 替代：无
-- 被替代：无
+- 被替代：由 [ADR-0004](ADR-0004-function-declared-composite-and-pipeline.md) 完整替代
 
 ## 决策摘要
 

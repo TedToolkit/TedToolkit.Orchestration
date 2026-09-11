@@ -1,101 +1,168 @@
 using System.Linq;
+using System.Text;
 using Microsoft.CodeAnalysis;
 
 namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 
 internal static class StepSymbols
 {
-    internal const string AsyncVoidStepName = "TedToolkit.Orchestration.Pipeline.IAsyncStep";
+    internal const string StepAttributeName =
+        "TedToolkit.Orchestration.Pipeline.Attributes.StepAttribute";
+    internal const string PipelineAttributeName =
+        "TedToolkit.Orchestration.Pipeline.Attributes.PipelineAttribute";
+    internal const string CompositeProtocolAttributeName =
+        "TedToolkit.Orchestration.Pipeline.CompilerServices.GeneratedCompositeStepAttribute";
     internal const string VoidBuilderName = "TedToolkit.Orchestration.Pipeline.StepBuilder";
-    internal const string AsyncStepName = "TedToolkit.Orchestration.Pipeline.IAsyncStep`1";
-    internal const string ServiceName = "TedToolkit.Orchestration.Pipeline.Attributes.FromServicesAttribute";
+    internal const string ServiceName =
+        "TedToolkit.Orchestration.Pipeline.Attributes.FromServicesAttribute";
     internal const string ArgumentName = "TedToolkit.Orchestration.Pipeline.StepArgument`1";
     internal const string BuilderName = "TedToolkit.Orchestration.Pipeline.StepBuilder`1";
-    internal const string VoidStepName = "TedToolkit.Orchestration.Pipeline.IStep";
-    internal const string StepName = "TedToolkit.Orchestration.Pipeline.IStep`1";
 
-    internal static INamedTypeSymbol[] Contracts(ITypeSymbol type, Compilation compilation)
+    internal static bool IsLeafStep(IMethodSymbol method) =>
+        HasAttribute(method, StepAttributeName);
+
+    internal static bool IsPipeline(IMethodSymbol method) =>
+        HasAttribute(method, PipelineAttributeName);
+
+    internal static AttributeData? PipelineAttribute(IMethodSymbol method) =>
+        method.GetAttributes().FirstOrDefault(attribute =>
+            attribute.AttributeClass?.ToDisplayString() == PipelineAttributeName);
+
+    internal static bool HasAttribute(ISymbol symbol, string metadataName) =>
+        symbol.GetAttributes().Any(attribute =>
+            attribute.AttributeClass?.ToDisplayString() == metadataName);
+
+    internal static bool IsUserAuthored(ISymbol symbol) => symbol.Locations.Any(location =>
+        location.IsInSource &&
+        location.SourceTree?.FilePath.EndsWith(".g.cs", System.StringComparison.OrdinalIgnoreCase) != true);
+
+    internal static string? InvalidContract(IMethodSymbol method, Compilation compilation)
     {
-        var definitions = new[] { VoidStepName, StepName, AsyncVoidStepName, AsyncStepName }
-            .Select(compilation.GetTypeByMetadataName).ToArray();
-        return type.AllInterfaces.Where(contract => definitions.Any(definition =>
-            SymbolEqualityComparer.Default.Equals(contract.OriginalDefinition, definition))).ToArray();
-    }
+        var owner = method.ContainingType;
+        if (owner.TypeKind != TypeKind.Class || !owner.IsStatic ||
+            owner.DeclaredAccessibility is not (Accessibility.Internal or Accessibility.Public) ||
+            owner.IsFileLocal || owner.ContainingType is not null || owner.Arity != 0)
+            return "Step methods must be declared in a top-level, non-generic internal or public static class";
+        if (method.MethodKind != MethodKind.Ordinary || !method.IsStatic ||
+            method.DeclaredAccessibility is not (Accessibility.Internal or Accessibility.Public) ||
+            method.IsGenericMethod)
+            return "Step methods must be internal or public static non-generic methods";
+        if (owner.GetMembers(method.Name).OfType<IMethodSymbol>()
+            .Count(candidate => candidate.MethodKind == MethodKind.Ordinary) != 1)
+            return "Step method names must be unique within their containing type";
+        if (method.RefKind != RefKind.None || method.IsAsync && method.ReturnsVoid ||
+            !TryGetReturnShape(method, out _, out _))
+            return "Step methods must return void, a non-ref-like result, Task, or Task<TResult>";
 
-    internal static ITypeSymbol? ResultType(ITypeSymbol type, Compilation compilation) =>
-        Contracts(type, compilation).FirstOrDefault(contract => contract.TypeArguments.Length == 1)?.TypeArguments[0];
+        var cancellation = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
+        var tokens = method.Parameters.Where(parameter =>
+            cancellation is not null &&
+            SymbolEqualityComparer.Default.Equals(parameter.Type, cancellation)).ToArray();
+        if (tokens.Length != 1 || tokens[0].Ordinal != method.Parameters.Length - 1 ||
+            IsService(tokens[0]))
+            return "Step methods must declare exactly one unmarked trailing CancellationToken";
 
-    internal static bool IsSynchronous(ITypeSymbol type, Compilation compilation) =>
-        Contracts(type, compilation).Any(contract => contract.Name == "IStep");
-
-    internal static bool IsLeafStep(ITypeSymbol type, Compilation compilation) =>
-        type.TypeKind != TypeKind.Interface && Contracts(type, compilation).Length != 0;
-
-    internal static string? InvalidContract(INamedTypeSymbol type, Compilation compilation)
-    {
-        if (!type.IsRefLikeType || type.TypeKind != TypeKind.Struct) return "steps must be ref structs";
-        if (!type.IsReadOnly || type.DeclaredAccessibility != Accessibility.Internal ||
-            type.IsFileLocal || type.ContainingType is not null || type.Arity != 0 ||
-            !type.DeclaringSyntaxReferences.Any(reference =>
-                reference.GetSyntax() is Microsoft.CodeAnalysis.CSharp.Syntax.StructDeclarationSyntax declaration &&
-                declaration.Modifiers.Any(Microsoft.CodeAnalysis.CSharp.SyntaxKind.PartialKeyword)))
-            return "steps must be top-level, non-generic internal readonly ref partial structs";
-        if (StepContextEmitter.HasExplicitLayout(type))
-            return "steps cannot use explicit struct layout because generated context adds fields";
-        var contracts = Contracts(type, compilation);
-        if (contracts.Length != 1) return "implement exactly one synchronous or asynchronous step interface";
-        var method = contracts[0].GetMembers().OfType<IMethodSymbol>().Single();
-        if (type.FindImplementationForInterfaceMember(method) is not IMethodSymbol implementation ||
-            implementation.DeclaredAccessibility != Accessibility.Public)
-            return "the execution method must be public and directly callable";
-        if (type.AllInterfaces.Any(contract => contract.ToDisplayString() == "System.IAsyncDisposable") ||
-            (contracts[0].Name != "IStep" && type.GetMembers("Dispose").Length != 0) ||
-            (contracts[0].Name != "IStep" && type.AllInterfaces.Any(contract => contract.ToDisplayString() == "System.IDisposable")))
-            return "asynchronous cleanup must belong to the returned operation, not the step instance";
-        if (type.GetMembers().Any(member =>
-            member is IPropertySymbol { IsRequired: true } or IFieldSymbol { IsRequired: true } &&
-            member.Locations.Any(location => location.SourceTree?.FilePath.EndsWith(
-                ".StepContext.g.cs", System.StringComparison.Ordinal) != true)))
-            return "user-authored required members are not supported";
-        var constructors = UsableConstructors(type, compilation);
-        if (constructors.Length != 1)
-            return "declare exactly one constructor accessible to generated execution";
-        if (constructors[0].Parameters.Any(parameter =>
+        if (method.Parameters.Any(parameter =>
             parameter.RefKind != RefKind.None ||
             parameter.Type.IsRefLikeType ||
-            parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer))
-            return "constructor parameters must be by-value and cannot be ref-like, pointer, or function-pointer types";
+            parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer ||
+            HasTypeParameter(parameter.Type)))
+            return "Step parameters must be closed by-value types and cannot be ref-like, pointer, or function-pointer types";
+
+        var logger = compilation.GetTypeByMetadataName("Microsoft.Extensions.Logging.ILogger");
+        if (method.Parameters.Any(parameter =>
+            logger is not null &&
+            SymbolEqualityComparer.Default.Equals(parameter.Type, logger) &&
+            ServiceAttribute(parameter)?.ConstructorArguments.FirstOrDefault().Value is string))
+            return "a non-generic ILogger service cannot use a key";
         return null;
     }
 
-    internal static IMethodSymbol[] UsableConstructors(INamedTypeSymbol type, Compilation compilation)
+    internal static bool TryGetReturnShape(
+        IMethodSymbol method, out ITypeSymbol? result, out bool synchronous)
     {
-        var explicitConstructors = type.InstanceConstructors.Where(constructor =>
-            !constructor.IsImplicitlyDeclared &&
-            compilation.IsSymbolAccessibleWithin(constructor, compilation.Assembly)).ToArray();
-        return explicitConstructors.Length != 0
-            ? explicitConstructors
-            : type.InstanceConstructors.Where(constructor =>
-                constructor.IsImplicitlyDeclared &&
-                constructor.Parameters.Length == 0 &&
-                compilation.IsSymbolAccessibleWithin(constructor, compilation.Assembly)).ToArray();
+        result = null;
+        synchronous = true;
+        if (method.ReturnsVoid) return true;
+        if (method.ReturnType.IsRefLikeType ||
+            method.ReturnType.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer ||
+            HasTypeParameter(method.ReturnType))
+            return false;
+        if (method.ReturnType is INamedTypeSymbol named)
+        {
+            var definition = named.OriginalDefinition.ToDisplayString();
+            if (definition is "System.Threading.Tasks.ValueTask" or
+                "System.Threading.Tasks.ValueTask<TResult>")
+                return false;
+            if (definition == "System.Threading.Tasks.Task")
+            {
+                synchronous = false;
+                return true;
+            }
+            if (definition == "System.Threading.Tasks.Task<TResult>")
+            {
+                result = named.TypeArguments[0];
+                synchronous = false;
+                return !result.IsRefLikeType && !HasTypeParameter(result);
+            }
+        }
+        result = method.ReturnType;
+        return true;
     }
 
-    internal static bool IsService(IParameterSymbol parameter) => ServiceAttribute(parameter) is not null;
+    internal static bool IsCancellationToken(IParameterSymbol parameter) =>
+        parameter.Type.ToDisplayString() == "System.Threading.CancellationToken";
 
-    internal static AttributeData? ServiceAttribute(IParameterSymbol parameter) => parameter.GetAttributes().FirstOrDefault(attribute =>
-        attribute.AttributeClass?.ToDisplayString() == ServiceName);
+    internal static bool IsService(IParameterSymbol parameter) =>
+        ServiceAttribute(parameter) is not null;
+
+    internal static AttributeData? ServiceAttribute(IParameterSymbol parameter) =>
+        parameter.GetAttributes().FirstOrDefault(attribute =>
+            attribute.AttributeClass?.ToDisplayString() == ServiceName);
 
     internal static bool SameType(ITypeSymbol left, ITypeSymbol right) =>
         SymbolEqualityComparer.IncludeNullability.Equals(left, right);
 
     internal static bool HasTypeParameter(ITypeSymbol type) => type.TypeKind == TypeKind.TypeParameter ||
         type is IArrayTypeSymbol array && HasTypeParameter(array.ElementType) ||
-        type is INamedTypeSymbol named && (named.IsUnboundGenericType || named.TypeArguments.Any(HasTypeParameter) ||
+        type is INamedTypeSymbol named && (named.IsUnboundGenericType ||
+            named.TypeArguments.Any(HasTypeParameter) ||
             named.ContainingType is not null && HasTypeParameter(named.ContainingType));
 
-    internal static string TypeName(ITypeSymbol type) => type.ToDisplayString(
+    private static readonly SymbolDisplayFormat TypeDisplayFormat =
         SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
             SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers |
-            SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier));
+            SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+    internal static string TypeName(ITypeSymbol type) => type.ToDisplayString(TypeDisplayFormat);
+
+    internal static string TypeName(ITypeSymbol type, IAssemblySymbol assembly, string alias)
+    {
+        var parts = type.ToDisplayParts(TypeDisplayFormat);
+        var result = new StringBuilder();
+        for (var index = 0; index < parts.Length; index++)
+        {
+            if (parts[index].ToString() == "global" && index + 1 < parts.Length &&
+                parts[index + 1].ToString() == "::" &&
+                QualifierTargets(parts, index + 2, assembly))
+                result.Append(alias);
+            else
+                result.Append(parts[index].ToString());
+        }
+        return result.ToString();
+    }
+
+    private static bool QualifierTargets(
+        System.Collections.Immutable.ImmutableArray<SymbolDisplayPart> parts,
+        int start,
+        IAssemblySymbol assembly)
+    {
+        for (var index = start; index < parts.Length; index++)
+        {
+            var containingAssembly = parts[index].Symbol?.ContainingAssembly;
+            if (containingAssembly is not null)
+                return SymbolEqualityComparer.Default.Equals(containingAssembly, assembly);
+        }
+        return false;
+    }
 }

@@ -9,13 +9,12 @@ public partial class ExecutorGeneratorTests
     public async Task ParallelEntrypointsDirectlyCallStepsWithoutBranchesOrNestedMethods()
     {
         var generated = await Generate(NamedSteps + ConcurrentSteps + """
-            [CompositeStep]
-            public readonly ref partial struct Example(
-                Func<CancellationToken, Task<int>> rootWork,
+            public static partial class Example
+            {
+                [Pipeline]
+                public static void Configuration(StepGraph p, Func<CancellationToken, Task<int>> rootWork,
                 Func<int, CancellationToken, Task<int>> leftWork,
                 Func<int, CancellationToken, Task<int>> rightWork)
-            {
-                private void Configuration(StepGraph p)
                 {
                     var root = p.Start(rootWork);
                     var left = p.After(root, leftWork);
@@ -60,21 +59,25 @@ public partial class ExecutorGeneratorTests
                 public int Constructed;
                 public int Downstream;
             }
-            internal readonly ref partial struct Fail : IStep<int>
+            internal static class FailStepMethods
             {
-                private readonly State state;
-                public Fail(State state) { this.state = state; state.Constructed++; }
-                public int Execute(CancellationToken token) => throw state.Expected;
+                [Step]
+                internal static int Fail(State state, CancellationToken token)
+                {
+                    state.Constructed++;
+                    throw state.Expected;
+                }
             }
-            internal readonly ref partial struct Touch(int value, State state) : IStep
+            internal static class TouchStepMethods
             {
-                public void Execute(CancellationToken token) => state.Downstream++;
+                [Step]
+                internal static void Touch(int value, State state, CancellationToken token) => state.Downstream++;
             }
-            [CompositeStep]
-            public readonly ref partial struct Example(State state, Func<CancellationToken, Task<int>> slowWork)
+            public static partial class Example
             {
                 private static State Read(State state) => state.ArgumentFailure ? throw state.Expected : state;
-                private void Configuration(StepGraph p)
+                [Pipeline]
+                public static void Configuration(StepGraph p, State state, Func<CancellationToken, Task<int>> slowWork)
                 {
                     var slow = p.Start(slowWork);
                     var failed = p.Fail(Read(state));
@@ -86,7 +89,7 @@ public partial class ExecutorGeneratorTests
                 var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var cleaned = 0;
-                Task execution = new Example.Pipeline().METHOD(state, slowWork: async token =>
+                Task execution = new Example.ConfigurationPipeline().METHOD(state, slowWork: async token =>
                 {
                     using var registration = token.Register(() => { canceled.TrySetResult(); throw new Exception("callback"); });
                     try { await release.Task; return 1; }
@@ -112,17 +115,17 @@ public partial class ExecutorGeneratorTests
     {
         var result = await Run(ConcurrentSteps + """
             public sealed class State { public int Attempts; }
-            internal readonly ref partial struct Retry(State state) : IAsyncStep<int>
+            internal static class RetryStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) =>
+                [Step]
+                internal static Task<int> Retry(State state, CancellationToken token) =>
                     ++state.Attempts == 1 ? Task.FromException<int>(new Exception("retry")) : Task.FromResult(42);
             }
-            [CompositeStep]
-            public readonly ref partial struct Example(
-                State state,
-                Func<CancellationToken, Task<int>> otherWork)
+            public static partial class Example
             {
-                private void Configuration(StepGraph p)
+                [Pipeline]
+                public static void Configuration(StepGraph p, State state,
+                Func<CancellationToken, Task<int>> otherWork)
                 {
                     var retry = p.Retry(state).WithRetry(1);
                     var other = p.Start(otherWork);
@@ -130,7 +133,7 @@ public partial class ExecutorGeneratorTests
             }
             """ + AsyncScenario("""
                 var state = new State();
-                var result = await new Example.Pipeline().ExecuteAsync(state, otherWork: async token =>
+                var result = await new Example.ConfigurationPipeline().ExecuteAsync(state, otherWork: async token =>
                 {
                     await Task.Yield();
                     token.ThrowIfCancellationRequested();

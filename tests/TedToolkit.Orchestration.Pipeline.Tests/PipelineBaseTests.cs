@@ -6,7 +6,7 @@ public partial class ExecutorGeneratorTests
     public async Task RemovedRuntimeContractsAreNotPresent()
     {
         var runtime = typeof(StepGraph).Assembly;
-        await Assert.That(runtime.GetType("TedToolkit.Orchestration.Pipeline.Pipeline")).IsNull();
+        await Assert.That(runtime.GetType("TedToolkit.Orchestration.Pipeline.ConfigurationPipeline")).IsNull();
         await Assert.That(runtime.GetType("TedToolkit.Orchestration.Pipeline.StepMetadata")).IsNull();
         await Assert.That(runtime.GetType(
             "TedToolkit.Orchestration.Pipeline.Attributes.StepPolicyAttribute")).IsNull();
@@ -37,30 +37,30 @@ public partial class ExecutorGeneratorTests
     public async Task MultipleCompositesKeepTheirInputsSeparate()
     {
         var result = await Run(NamedSteps + """
-            [CompositeStep]
-            public readonly ref partial struct First(int value)
+            public static partial class First
             {
-                private void Configuration(StepGraph graph) { var sum = graph.Add(value, 2); }
+                [Pipeline]
+                public static void Configuration(StepGraph graph, int value) { var sum = graph.Add(value, 2); }
             }
-            [CompositeStep]
-            public readonly ref partial struct Second(int value)
+            public static partial class Second
             {
-                private void Configuration(StepGraph graph) { var sum = graph.Add(40, value); }
+                [Pipeline]
+                public static void Configuration(StepGraph graph, int value) { var sum = graph.Add(40, value); }
             }
             """ + AsyncScenario("""
-                var first = new First.Pipeline();
-                var second = new Second.Pipeline();
+                var first = new First.ConfigurationPipeline();
+                var second = new Second.ConfigurationPipeline();
                 return $"{first.Execute(10).Sum}:{second.Execute(2).Sum}:{typeof(StepGraph).IsValueType}";
                 """));
         await Assert.That(result).IsEqualTo("12:42:True");
     }
 
     [Test]
-    [Arguments("[CompositeStep] public ref partial struct Example { private void Configuration(StepGraph graph) { } }")]
-    [Arguments("[CompositeStep] public readonly ref struct Example { private void Configuration(StepGraph graph) { } }")]
-    [Arguments("[CompositeStep] public readonly ref partial struct Example<T> { private void Configuration(StepGraph graph) { } }")]
-    [Arguments("[CompositeStep] public readonly ref partial struct Example { public void Configuration(StepGraph graph) { } }")]
-    [Arguments("[CompositeStep] public readonly ref partial struct Example { private static void Configuration(StepGraph graph) { } }")]
+    [Arguments("public partial class Example { public static void Configuration(StepGraph graph) { } }")]
+    [Arguments("public static class Example { public static void Configuration(StepGraph graph) { } }")]
+    [Arguments("public static partial class Example<T> { public static void Configuration(StepGraph graph) { } }")]
+    [Arguments("public static partial class Example { public void Configuration(StepGraph graph) { } }")]
+    [Arguments("public static partial class Example { private static void Configuration(StepGraph graph) { } }")]
     public async Task InvalidCompositeDeclarationsAreRejected(string declaration)
     {
         var generated = await Generate(declaration);
@@ -71,18 +71,18 @@ public partial class ExecutorGeneratorTests
     public async Task ArgumentExpressionsAreEvaluatedForEachInvocation()
     {
         var result = await Run(NamedSteps + """
-            [CompositeStep]
-            public readonly ref partial struct Example(int value)
+            public static partial class Example
             {
                 public static int Evaluations;
                 private static int Next(int value) { Evaluations++; return value; }
-                private void Configuration(StepGraph graph)
+                [Pipeline]
+                public static void Configuration(StepGraph graph, int value)
                 {
                     var sum = graph.Add(Next(value), 2);
                 }
             }
             """ + AsyncScenario("""
-                var pipeline = new Example.Pipeline();
+                var pipeline = new Example.ConfigurationPipeline();
                 var first = pipeline.Execute(10);
                 pipeline.ExecuteWithoutResults(20);
                 return $"{first.Sum}:{Example.Evaluations}";
@@ -98,10 +98,10 @@ public partial class ExecutorGeneratorTests
             {
                 public static StepBuilder<int> Add(this StepGraph graph, int a, int b) => default;
             }
-            [CompositeStep]
-            public readonly ref partial struct Example
+            public static partial class Example
             {
-                private void Configuration(StepGraph graph) { var sum = graph.Add(40, 2); }
+                [Pipeline]
+                public static void Configuration(StepGraph graph) { var sum = graph.Add(40, 2); }
             }
             """);
         await Assert.That(generated.Diagnostics.Any(item => item.Id == "TTP009")).IsTrue();
@@ -111,14 +111,15 @@ public partial class ExecutorGeneratorTests
     public async Task GeneratedExecutionContainsNoRuntimeGraphOrReflectionDispatch()
     {
         var generated = await Generate(NamedSteps + """
-            [CompositeStep]
-            public readonly ref partial struct Example
+            public static partial class Example
             {
-                private void Configuration(StepGraph graph) { var sum = graph.Add(40, 2); }
+                [Pipeline]
+                public static void Configuration(StepGraph graph) { var sum = graph.Add(40, 2); }
             }
             """);
         await NoErrors(generated);
-        await Assert.That(generated.GeneratedSource.Contains("new global::Add(")).IsTrue();
+        await Assert.That(generated.GeneratedSource.Contains(
+            "global::AddStepMethods.Add(40, 2, executionToken)")).IsTrue();
         await Assert.That(generated.GeneratedSource.Contains("GetType(") ||
             generated.GeneratedSource.Contains("Invoke(") ||
             generated.GeneratedSource.Contains("BeginNode")).IsFalse();

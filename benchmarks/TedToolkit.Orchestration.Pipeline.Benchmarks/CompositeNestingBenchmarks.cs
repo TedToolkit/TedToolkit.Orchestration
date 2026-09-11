@@ -6,8 +6,8 @@ namespace TedToolkit.Orchestration.Pipeline.Benchmarks;
 [MemoryDiagnoser]
 public class CompositeNestingBenchmarks
 {
-    private readonly FlatPair.Pipeline _flat = new();
-    private readonly NestedPair.Pipeline _nested = new();
+    private readonly FlatPair.ConfigurationPipeline _flat = new();
+    private readonly NestedPair.ConfigurationPipeline _nested = new();
 
     [Params(WorkMode.Completed, WorkMode.Yield)]
     public WorkMode Mode { get; set; }
@@ -41,8 +41,8 @@ public class CompositeNestingBenchmarks
 [MemoryDiagnoser]
 public class CompositeSyncNestingBenchmarks
 {
-    private readonly FlatSyncPair.Pipeline _flat = new();
-    private readonly NestedSyncPair.Pipeline _nested = new();
+    private readonly FlatSyncPair.ConfigurationPipeline _flat = new();
+    private readonly NestedSyncPair.ConfigurationPipeline _nested = new();
 
     [Params(1024)]
     public int Input { get; set; }
@@ -62,59 +62,59 @@ public class CompositeSyncNestingBenchmarks
     public int Nested() => _nested.Execute(Input).Pair.Output;
 }
 
-[CompositeStep]
-internal readonly ref partial struct FlatPair(int input, WorkMode mode)
+internal static partial class FlatPair
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int input, WorkMode mode)
     {
         var first = steps.AddStep(input, 1, mode);
         var output = steps.AddStep(first, 1, mode);
     }
 }
 
-[CompositeStep]
-internal readonly ref partial struct Pair(int input, WorkMode mode)
+internal static partial class Pair
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int input, WorkMode mode)
     {
         var first = steps.AddStep(input, 1, mode);
         var output = steps.AddStep(first, 1, mode);
     }
 }
 
-[CompositeStep]
-internal readonly ref partial struct NestedPair(int input, WorkMode mode)
+internal static partial class NestedPair
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int input, WorkMode mode)
     {
         var pair = steps.Pair(input, mode);
     }
 }
 
-[CompositeStep]
-internal readonly ref partial struct FlatSyncPair(int input)
+internal static partial class FlatSyncPair
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int input)
     {
         var first = steps.SyncAdd(input, 1);
         var output = steps.SyncAdd(first, 1);
     }
 }
 
-[CompositeStep]
-internal readonly ref partial struct SyncPair(int input)
+internal static partial class SyncPair
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int input)
     {
         var first = steps.SyncAdd(input, 1);
         var output = steps.SyncAdd(first, 1);
     }
 }
 
-[CompositeStep]
-internal readonly ref partial struct NestedSyncPair(int input)
+internal static partial class NestedSyncPair
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int input)
     {
         var pair = steps.SyncPair(input);
     }

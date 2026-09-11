@@ -3,13 +3,15 @@ namespace TedToolkit.Orchestration.Pipeline.Tests;
 public partial class ExecutorGeneratorTests
 {
     private const string ConcurrentSteps = """
-        internal readonly ref partial struct Start(Func<CancellationToken, Task<int>> work) : IAsyncStep<int>
+        internal static class StartStepMethods
         {
-            public Task<int> ExecuteAsync(CancellationToken token) => work(token);
+            [Step]
+            internal static Task<int> Start(Func<CancellationToken, Task<int>> work, CancellationToken token) => work(token);
         }
-        internal readonly ref partial struct After(int value, Func<int, CancellationToken, Task<int>> work) : IAsyncStep<int>
+        internal static class AfterStepMethods
         {
-            public Task<int> ExecuteAsync(CancellationToken token) => work(value, token);
+            [Step]
+            internal static Task<int> After(int value, Func<int, CancellationToken, Task<int>> work, CancellationToken token) => work(value, token);
         }
         """;
 
@@ -17,14 +19,13 @@ public partial class ExecutorGeneratorTests
     public async Task ChildStartsAsSoonAsItsOwnDependencyCompletesAndRootRunsOnce()
     {
         var result = await Run(NamedSteps + ConcurrentSteps + """
-            [CompositeStep]
-            public readonly ref partial struct Example(
-                Func<CancellationToken, Task<int>> rootWork,
+            public static partial class Example
+            {
+                [Pipeline]
+                public static void Configuration(StepGraph p, Func<CancellationToken, Task<int>> rootWork,
                 Func<int, CancellationToken, Task<int>> slowWork,
                 Func<int, CancellationToken, Task<int>> fastWork,
                 Func<int, CancellationToken, Task<int>> childWork)
-            {
-                private void Configuration(StepGraph p)
                 {
                     var root = p.Start(rootWork); var slow = p.After(root, slowWork); var fast = p.After(root, fastWork);
                     var child = p.After(fast, childWork); var sum = p.Add(slow, child);
@@ -35,7 +36,7 @@ public partial class ExecutorGeneratorTests
                 var childFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var roots = 0;
-                var execution = new Example.Pipeline().ExecuteAsync(
+                var execution = new Example.ConfigurationPipeline().ExecuteAsync(
                     rootWork: token => Task.FromResult(++roots),
                     slowWork: async (value, token) => { started.SetResult(); await release.Task; return value + 1; },
                     fastWork: async (value, token) => { await started.Task; return value + 2; },
@@ -60,7 +61,7 @@ public partial class ExecutorGeneratorTests
             var cleaned = 0;
             CancellationToken stepToken = default;
             var expected = new InvalidOperationException("original");
-            Task execution = new Example.Pipeline().METHOD(
+            Task execution = new Example.ConfigurationPipeline().METHOD(
                 rootWork: token => Task.FromResult(1),
                 slowWork: async (value, token) =>
                 {
@@ -86,13 +87,12 @@ public partial class ExecutorGeneratorTests
             """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")
             .Replace("FAIL_ACTION", callerCancels ? "cancellation.Cancel(); await Task.Delay(-1, token); return 1;" : "throw expected;");
         var result = await Run(NamedSteps + ConcurrentSteps + """
-            [CompositeStep]
-            public readonly ref partial struct Example(
-                Func<CancellationToken, Task<int>> rootWork,
+            public static partial class Example
+            {
+                [Pipeline]
+                public static void Configuration(StepGraph p, Func<CancellationToken, Task<int>> rootWork,
                 Func<int, CancellationToken, Task<int>> slowWork,
                 Func<int, CancellationToken, Task<int>> failWork)
-            {
-                private void Configuration(StepGraph p)
                 {
                     var root = p.Start(rootWork); var slow = p.After(root, slowWork);
                     var fail = p.After(root, failWork); p.Add(slow, fail);
@@ -106,12 +106,11 @@ public partial class ExecutorGeneratorTests
     public async Task CancellationCallbackFailureDoesNotReplaceStepFailure()
     {
         var result = await Run(NamedSteps + ConcurrentSteps + """
-            [CompositeStep]
-            public readonly ref partial struct Example(
-                Func<CancellationToken, Task<int>> slowWork,
-                Func<CancellationToken, Task<int>> failWork)
+            public static partial class Example
             {
-                private void Configuration(StepGraph p)
+                [Pipeline]
+                public static void Configuration(StepGraph p, Func<CancellationToken, Task<int>> slowWork,
+                Func<CancellationToken, Task<int>> failWork)
                 {
                     var slow = p.Start(slowWork); var fail = p.Start(failWork); p.Add(slow, fail);
                 }
@@ -120,7 +119,7 @@ public partial class ExecutorGeneratorTests
                 var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var expected = new InvalidOperationException("primary");
                 var callbackFailure = new InvalidOperationException("callback");
-                var execution = new Example.Pipeline().ExecuteAsync(
+                var execution = new Example.ConfigurationPipeline().ExecuteAsync(
                     slowWork: async token =>
                     {
                         using var registration = token.Register(() => throw callbackFailure);
@@ -140,13 +139,13 @@ public partial class ExecutorGeneratorTests
     public async Task ConcurrentInvocationsKeepInputsAndResultsSeparate()
     {
         var result = await Run(ConcurrentSteps + """
-            [CompositeStep]
-            public readonly ref partial struct Example(Func<CancellationToken, Task<int>> work)
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { var node = p.Start(work); }
+                [Pipeline]
+                public static void Configuration(StepGraph p, Func<CancellationToken, Task<int>> work) { var node = p.Start(work); }
             }
             """ + AsyncScenario("""
-                var e = new Example.Pipeline();
+                var e = new Example.ConfigurationPipeline();
                 var first = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
                 var a = e.ExecuteAsync(_ => first.Task);
                 var b = await e.ExecuteAsync(_ => Task.FromResult(2));

@@ -52,19 +52,24 @@ internal sealed class GraphReader
                         invocation.TargetMethod.ContainingType, item.ExtensionsIn(_model.Compilation)));
                 if (factory is null) { Fail(call, "unknown step factory"); continue; }
                 var variable = (statement as LocalDeclarationStatementSyntax)?.Declaration.Variables[0];
-                var name = variable?.Identifier.ValueText ?? factory.Type.Name + _nodes.Count;
-                var displayName = variable?.Identifier.ValueText ?? factory.Type.Name + "#" + (_nodes.Count + 1);
+                var name = variable?.Identifier.ValueText ?? factory.Name + _nodes.Count;
+                var displayName = variable?.Identifier.ValueText ?? factory.Name + "#" + (_nodes.Count + 1);
                 var node = new GraphNode(factory)
                     { Index = _nodes.Count, Name = name, DisplayName = displayName };
                 foreach (var argument in invocation.Arguments.Where(item => item.Parameter!.Ordinal != 0).OrderBy(item => item.Parameter!.Ordinal))
                 {
-                    var binding = ReadBinding(argument, factory.Parameters[argument.Parameter!.Ordinal - 1]);
+                    var binding = ReadBinding(argument,
+                        factory.Parameters[argument.Parameter!.Ordinal - 1], factory);
                     node.Arguments.Add(binding);
                 }
                 ApplyModifiers(node, modifiers);
                 _nodes.Add(node);
                 if (variable is not null && _model.GetDeclaredSymbol(variable) is ILocalSymbol symbol) _locals.Add(symbol, node);
             }
+            else if (expression is InvocationExpressionSyntax ambiguous &&
+                IsAmbiguousFactoryCall(ambiguous, parameter))
+                Fail(ambiguous,
+                    "step factory call is ambiguous; call the generated extension type explicitly");
             else if (statement is LocalDeclarationStatementSyntax alias && alias.Declaration.Variables.Count == 1 &&
                 alias.Declaration.Variables[0] is { Initializer.Value: IdentifierNameSyntax identifier } declarator &&
                 _model.GetSymbolInfo(identifier).Symbol is ILocalSymbol source && _locals.TryGetValue(source, out var sourceNode) &&
@@ -194,6 +199,8 @@ internal sealed class GraphReader
 
     private void ValidateUsage(IParameterSymbol parameter, HashSet<InvocationExpressionSyntax> seen)
     {
+        var cancellation = ((IMethodSymbol)_model.GetDeclaredSymbol(_configure)!).Parameters
+            .FirstOrDefault(StepSymbols.IsCancellationToken);
         foreach (var call in _configure.Body!.DescendantNodes().OfType<InvocationExpressionSyntax>())
             if (_model.GetOperation(call) is IInvocationOperation invocation && !seen.Contains(call))
             {
@@ -219,6 +226,8 @@ internal sealed class GraphReader
                 if (!extensionReceiver && !staticReceiver)
                     Fail(identifier, "the configuration builder cannot escape or be aliased");
             }
+            if (cancellation is not null && SymbolEqualityComparer.Default.Equals(symbol, cancellation))
+                Fail(identifier, "the Configuration CancellationToken is execution control and cannot be referenced in the static graph");
             if (symbol is ILocalSymbol local && (_locals.ContainsKey(local) || _values.ContainsKey(local)) && identifier.Ancestors().TakeWhile(item => item is not StatementSyntax).Any(item =>
                 item is AssignmentExpressionSyntax assignment && assignment.Left.Span.Contains(identifier.Span) ||
                 item is ArgumentSyntax argument && !argument.RefKindKeyword.IsKind(SyntaxKind.None) || item is RefExpressionSyntax ||
@@ -239,13 +248,34 @@ internal sealed class GraphReader
         invocation.TargetMethod.IsExtensionMethod &&
         SymbolEqualityComparer.Default.Equals(invocation.TargetMethod.Parameters.FirstOrDefault()?.Type, builder);
 
-    private NodeArgument ReadBinding(IArgumentOperation argument, IParameterSymbol parameter)
+    private bool IsAmbiguousFactoryCall(
+        InvocationExpressionSyntax call, IParameterSymbol builderParameter)
+    {
+        if (call.Expression is not MemberAccessExpressionSyntax member ||
+            _model.GetSymbolInfo(member.Expression).Symbol is not IParameterSymbol receiver ||
+            !SymbolEqualityComparer.Default.Equals(receiver, builderParameter))
+            return false;
+        var name = member.Name.Identifier.ValueText;
+        var argumentCount = call.ArgumentList.Arguments.Count;
+        return _factories.Count(factory => factory.Name == name &&
+            argumentCount <= factory.Parameters.Length &&
+            argumentCount >= factory.Parameters.Count(parameter => !parameter.HasExplicitDefaultValue)) > 1;
+    }
+
+    private NodeArgument ReadBinding(
+        IArgumentOperation argument, IParameterSymbol parameter, StepFactory factory)
     {
         var value = argument.Value;
         while (value is IConversionOperation conversion) value = conversion.Operand;
         if (argument.ArgumentKind == ArgumentKind.DefaultValue || value is IDefaultValueOperation && SymbolEqualityComparer.Default.Equals(value.Type, argument.Parameter!.Type))
         {
-            Fail(argument.Syntax, "Composite Step registrations must bind every data input");
+            if (parameter.HasExplicitDefaultValue)
+                return new NodeArgument
+                {
+                    IsConstant = true,
+                    Expression = GeneratedCode.ExplicitDefault(parameter, factory.TypeName),
+                };
+            Fail(argument.Syntax, "Composite Step registrations must bind every data input without a declared default");
             return new NodeArgument();
         }
         if (value is ILocalReferenceOperation local && _locals.TryGetValue(local.Local, out var node))

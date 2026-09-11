@@ -9,11 +9,18 @@ internal static class PipelineSymbols
 {
     internal const string StepGraphName = "TedToolkit.Orchestration.Pipeline.StepGraph";
 
-    internal static bool IsCompositeConfiguration(IMethodSymbol method, Compilation compilation) =>
+    internal static bool IsCompositeCandidate(IMethodSymbol method, Compilation compilation) =>
         method.Name == "Configuration" &&
         SymbolEqualityComparer.Default.Equals(method.Parameters.FirstOrDefault()?.Type,
-            compilation.GetTypeByMetadataName(StepGraphName)) &&
-        StepContextEmitter.HasAttribute(method.ContainingType, StepContextEmitter.CompositeAttributeName);
+            compilation.GetTypeByMetadataName(StepGraphName));
+
+    internal static bool IsCompositeConfiguration(IMethodSymbol method, Compilation compilation)
+    {
+        if (!IsCompositeCandidate(method, compilation)) return false;
+        return method.DeclaringSyntaxReferences.Length == 0
+            ? CompositeStepGenerator.HasValidProtocol(method.ContainingType, compilation)
+            : CompositeStepGenerator.ContractError(method, compilation) is null;
+    }
 
     internal static bool IsStepFactory(IMethodSymbol method, Compilation compilation)
     {

@@ -12,7 +12,8 @@ internal static class ExecutionEmitter
 {
     internal static Method Create(IReadOnlyList<GraphNode> nodes, bool discardResults,
         bool staticCore = false, IReadOnlyList<IParameterSymbol>? rootInputs = null,
-        bool nestedCore = false, bool requiresServices = false)
+        bool nestedCore = false, bool requiresServices = false,
+        bool hierarchicalDisplayPath = false)
     {
         rootInputs ??= Array.Empty<IParameterSymbol>();
         var asynchronous = nodes.Any(node => !node.Factory.IsSynchronous);
@@ -31,6 +32,8 @@ internal static class ExecutionEmitter
                 method.AddParameter(new Parameter(typeof(IServiceProvider), "__services"));
             for (var index = 0; index < rootInputs.Count; index++)
                 method.AddParameter(new Parameter(Type(rootInputs[index].Type), "__root" + index));
+            if (hierarchicalDisplayPath)
+                method.AddParameter(new Parameter(typeof(string), "__displayPath"));
         }
         else
             _ = method.Public;
@@ -61,6 +64,11 @@ internal static class ExecutionEmitter
                 inputs.InsertRange(0, rootInputs.Select((_, index) => (IExpression)Name("__root" + index)));
                 if (node.Factory.RequiresServices)
                     inputs.Insert(0, Name("__services"));
+                if (hierarchicalDisplayPath)
+                {
+                    var insertion = node.Factory.RequiresServices ? 1 : 0;
+                    inputs.Insert(insertion, Name("__displayPath"));
+                }
             }
             inputs.Add(Name(parallel ? "execution" : "cancellationToken"));
             IExpression call = Call(StepExecutionEmitter.MethodName(node, parallel), inputs.ToArray());
@@ -71,7 +79,8 @@ internal static class ExecutionEmitter
                 if (!node.Factory.IsSynchronous) call = Await(call);
                 body.AddStatement(node.Factory.Result is null
                     ? call
-                    : Variable("result" + node.Index, call, Type(node.Factory.Result)));
+                    : Variable("result" + node.Index, call,
+                        node.Factory.GeneratedType(node.Factory.Result)));
             }
         }
         if (parallel)

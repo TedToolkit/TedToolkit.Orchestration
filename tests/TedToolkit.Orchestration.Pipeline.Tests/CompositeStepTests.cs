@@ -8,15 +8,16 @@ public partial class ExecutorGeneratorTests
     public async Task CompositeStepRunsAsRootThroughGeneratedPipeline()
     {
         var value = await Run("""
-            internal readonly ref partial struct Add(int left, int right) : IAsyncStep<int>
+            internal static class AddStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) => Task.FromResult(left + right);
+                [Step]
+                internal static Task<int> Add(int left, int right, CancellationToken token) => Task.FromResult(left + right);
             }
 
-            [CompositeStep]
-            public readonly ref partial struct Sum(int left, int right)
+            public static partial class Sum
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int left, int right)
                 {
                     var total = steps.Add(left, right);
                 }
@@ -26,7 +27,7 @@ public partial class ExecutorGeneratorTests
             {
                 public static async Task<string> Run()
                 {
-                    var pipeline = new Sum.Pipeline();
+                    var pipeline = new Sum.ConfigurationPipeline();
                     var result = await pipeline.ExecuteAsync(40, 2);
                     return $"{result.Total}";
                 }
@@ -40,14 +41,15 @@ public partial class ExecutorGeneratorTests
     public async Task ServiceRequirementControlsGeneratedCompositeSignatures()
     {
         var serviceFree = await Generate("""
-            internal readonly ref partial struct Value : IStep<int>
+            internal static class ValueStepMethods
             {
-                public int Execute(CancellationToken token) => 42;
+                [Step]
+                internal static int Value(CancellationToken token) => 42;
             }
-            [CompositeStep]
-            public readonly ref partial struct ServiceFree
+            public static partial class ServiceFree
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var value = steps.Value();
                 }
@@ -57,14 +59,15 @@ public partial class ExecutorGeneratorTests
 
         var serviceBound = await Generate("""
             public sealed class ValueProvider { public int Value => 42; }
-            internal readonly ref partial struct Read([FromServices] ValueProvider provider) : IStep<int>
+            internal static class ReadStepMethods
             {
-                public int Execute(CancellationToken token) => provider.Value;
+                [Step]
+                internal static int Read([FromServices] ValueProvider provider, CancellationToken token) => provider.Value;
             }
-            [CompositeStep]
-            public readonly ref partial struct ServiceBound
+            public static partial class ServiceBound
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var value = steps.Read();
                 }
@@ -83,14 +86,15 @@ public partial class ExecutorGeneratorTests
     public async Task PublicCompositeCanBeNestedFromAnotherCompilation()
     {
         var library = await Generate("""
-            internal readonly ref partial struct AddOne(int value) : IStep<int>
+            internal static class AddOneStepMethods
             {
-                public int Execute(CancellationToken token) => value + 1;
+                [Step]
+                internal static int AddOne(int value, CancellationToken token) => value + 1;
             }
-            [CompositeStep]
-            public readonly ref partial struct Increment(int value)
+            public static partial class Increment
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value)
                 {
                     var incremented = steps.AddOne(value);
                 }
@@ -102,17 +106,18 @@ public partial class ExecutorGeneratorTests
         await Assert.That(emitted.Success).IsTrue();
 
         var consumer = await Generate("""
-            [CompositeStep]
-            public readonly ref partial struct Consumer(int value)
+            public static partial class Consumer
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value)
                 {
                     var increment = steps.Increment(value);
                 }
             }
             """, MetadataReference.CreateFromImage(image.ToArray()), "CompositeConsumer");
         await NoErrors(consumer);
-        await Assert.That(consumer.GeneratedSource).Contains("new global::Increment(");
+        await Assert.That(consumer.GeneratedSource).Contains(
+            "global::Increment.__TedToolkitExecuteCompositeStep");
     }
 
     [Test]
@@ -121,14 +126,15 @@ public partial class ExecutorGeneratorTests
         var value = await Run("""
             namespace Alpha
             {
-                internal readonly ref partial struct AddOne(int value) : IStep<int>
+                internal static class AddOneStepMethods
                 {
-                    public int Execute(CancellationToken token) => value + 1;
+                    [Step]
+                    internal static int AddOne(int value, CancellationToken token) => value + 1;
                 }
-                [CompositeStep]
-                public readonly ref partial struct Transform(int value)
+                public static partial class Transform
                 {
-                    private void Configuration(StepGraph steps)
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps, int value)
                     {
                         var number = steps.AddOne(value);
                     }
@@ -136,23 +142,24 @@ public partial class ExecutorGeneratorTests
             }
             namespace Beta
             {
-                internal readonly ref partial struct Append(string value) : IStep<string>
+                internal static class AppendStepMethods
                 {
-                    public string Execute(CancellationToken token) => value + "!";
+                    [Step]
+                    internal static string Append(string value, CancellationToken token) => value + "!";
                 }
-                [CompositeStep]
-                public readonly ref partial struct Transform(string value)
+                public static partial class Transform
                 {
-                    private void Configuration(StepGraph steps)
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps, string value)
                     {
                         var text = steps.Append(value);
                     }
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct Both(int value, string text)
+            public static partial class Both
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value, string text)
                 {
                     var number = steps.Transform(value);
                     var textValue = steps.Transform(text);
@@ -162,7 +169,7 @@ public partial class ExecutorGeneratorTests
             {
                 public static Task<string> Run()
                 {
-                    var result = new Both.Pipeline().Execute(1, "x");
+                    var result = new Both.ConfigurationPipeline().Execute(1, "x");
                     return Task.FromResult($"{result.Number.Number}:{result.TextValue.Text}");
                 }
             }
@@ -177,32 +184,34 @@ public partial class ExecutorGeneratorTests
         var value = await Run("""
             namespace A_B
             {
-                internal readonly ref partial struct Increment(int value) : IStep<int>
+                internal static class IncrementStepMethods
                 {
-                    public int Execute(CancellationToken token) => value + 1;
+                    [Step]
+                    internal static int Increment(int value, CancellationToken token) => value + 1;
                 }
             }
             namespace A.B
             {
-                internal readonly ref partial struct Increment(int value) : IStep<int>
+                internal static class IncrementStepMethods
                 {
-                    public int Execute(CancellationToken token) => value + 2;
+                    [Step]
+                    internal static int Increment(int value, CancellationToken token) => value + 2;
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct Both(int value)
+            public static partial class Both
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value)
                 {
-                    var first = A__B_IncrementExtensions.Increment(steps, value);
-                    var second = A_B_IncrementExtensions.Increment(steps, value);
+                    var first = A__B_IncrementStepMethods_IncrementExtensions.Increment(steps, value);
+                    var second = A_B_IncrementStepMethods_IncrementExtensions.Increment(steps, value);
                 }
             }
             public static class Scenario
             {
                 public static Task<string> Run()
                 {
-                    var result = new Both.Pipeline().Execute(1);
+                    var result = new Both.ConfigurationPipeline().Execute(1);
                     return Task.FromResult($"{result.First}:{result.Second}");
                 }
             }
@@ -215,15 +224,15 @@ public partial class ExecutorGeneratorTests
     public async Task CompositeDependencyCyclesAreRejected()
     {
         var generated = await Generate("""
-            [CompositeStep]
-            public readonly ref partial struct First
+            public static partial class First
             {
-                private void Configuration(StepGraph steps) { steps.Second(); }
+                [Pipeline]
+                public static void Configuration(StepGraph steps) { steps.Second(); }
             }
-            [CompositeStep]
-            public readonly ref partial struct Second
+            public static partial class Second
             {
-                private void Configuration(StepGraph steps) { steps.First(); }
+                [Pipeline]
+                public static void Configuration(StepGraph steps) { steps.First(); }
             }
             """);
 
@@ -238,14 +247,15 @@ public partial class ExecutorGeneratorTests
         var alpha = await Generate("""
             namespace Alpha
             {
-                internal readonly ref partial struct AddOne(int value) : IStep<int>
+                internal static class AddOneStepMethods
                 {
-                    public int Execute(CancellationToken token) => value + 1;
+                    [Step]
+                    internal static int AddOne(int value, CancellationToken token) => value + 1;
                 }
-                [CompositeStep]
-                public readonly ref partial struct Increment(int value)
+                public static partial class Increment
                 {
-                    private void Configuration(StepGraph steps)
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps, int value)
                     {
                         var output = steps.AddOne(value);
                     }
@@ -255,14 +265,15 @@ public partial class ExecutorGeneratorTests
         var beta = await Generate("""
             namespace Beta
             {
-                internal readonly ref partial struct Double(int value) : IStep<int>
+                internal static class DoubleStepMethods
                 {
-                    public int Execute(CancellationToken token) => value * 2;
+                    [Step]
+                    internal static int Double(int value, CancellationToken token) => value * 2;
                 }
-                [CompositeStep]
-                public readonly ref partial struct Increment(int value)
+                public static partial class Increment
                 {
-                    private void Configuration(StepGraph steps)
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps, int value)
                     {
                         var output = steps.Double(value);
                     }
@@ -286,10 +297,10 @@ public partial class ExecutorGeneratorTests
         System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(alphaImage));
         System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(betaImage));
         var consumer = await GenerateWithReferences("""
-            [CompositeStep]
-            public readonly ref partial struct Both(int value)
+            public static partial class Both
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value)
                 {
                     var first = Alpha_IncrementExtensions.Increment(steps, value);
                     var second = Beta_IncrementExtensions.Increment(steps, value);
@@ -299,15 +310,17 @@ public partial class ExecutorGeneratorTests
             {
                 public static Task<string> Run()
                 {
-                    var result = new Both.Pipeline().Execute(21);
+                    var result = new Both.ConfigurationPipeline().Execute(21);
                     return Task.FromResult($"{result.First.Output}:{result.Second.Output}");
                 }
             }
             """, "CompositeConsumer", MetadataReference.CreateFromImage(alphaImage),
             MetadataReference.CreateFromImage(betaImage));
         await NoErrors(consumer);
-        await Assert.That(consumer.GeneratedSource).Contains("new global::Alpha.Increment(");
-        await Assert.That(consumer.GeneratedSource).Contains("new global::Beta.Increment(");
+        await Assert.That(consumer.GeneratedSource).Contains(
+            "global::Alpha.Increment.__TedToolkitExecuteCompositeStep");
+        await Assert.That(consumer.GeneratedSource).Contains(
+            "global::Beta.Increment.__TedToolkitExecuteCompositeStep");
 
         using var consumerImage = new MemoryStream();
         var emitted = consumer.Compilation.Emit(consumerImage);
@@ -326,27 +339,27 @@ public partial class ExecutorGeneratorTests
             public interface IOffset { int Value { get; } }
             public sealed class Offset : IOffset { public int Value => 2; }
 
-            internal readonly ref partial struct AddOffset(
-                int value,
-                [FromServices] IOffset offset) : IAsyncStep<int>
+            internal static class AddOffsetStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) =>
+                [Step]
+                internal static Task<int> AddOffset(int value,
+                [FromServices] IOffset offset, CancellationToken token) =>
                     Task.FromResult(value + offset.Value);
             }
 
-            [CompositeStep]
-            public readonly ref partial struct Inner(int value)
+            public static partial class Inner
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value)
                 {
                     var adjusted = steps.AddOffset(value);
                 }
             }
 
-            [CompositeStep]
-            public readonly ref partial struct Outer(int value)
+            public static partial class Outer
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value)
                 {
                     var inner = steps.Inner(value);
                 }
@@ -359,7 +372,7 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection()
                         .AddSingleton<IOffset, Offset>()
                         .BuildServiceProvider();
-                    var pipeline = new Outer.Pipeline(services);
+                    var pipeline = new Outer.ConfigurationPipeline(services);
                     var result = await pipeline.ExecuteAsync(40);
                     return $"{result.Inner.Adjusted}";
                 }
@@ -373,27 +386,28 @@ public partial class ExecutorGeneratorTests
     public async Task ParentRetryRerunsCompositeWhileChildRetryRemainsLocal()
     {
         var value = await Run("""
-            internal readonly ref partial struct Eventually : IStep<int>
+            internal static class EventuallyStepMethods
             {
                 public static int Attempts;
-                public int Execute(CancellationToken token)
+                [Step]
+                internal static int Eventually(CancellationToken token)
                 {
                     if (++Attempts <= 2) throw new InvalidOperationException("retry");
                     return 42;
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct InnerRetry
+            public static partial class InnerRetry
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var value = steps.Eventually().WithRetry(1);
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct OuterRetry
+            public static partial class OuterRetry
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var inner = steps.InnerRetry().WithRetry(1);
                 }
@@ -402,8 +416,8 @@ public partial class ExecutorGeneratorTests
             {
                 public static Task<string> Run()
                 {
-                    var result = new OuterRetry.Pipeline().Execute();
-                    return Task.FromResult($"{result.Inner.Value}:{Eventually.Attempts}");
+                    var result = new OuterRetry.ConfigurationPipeline().Execute();
+                    return Task.FromResult($"{result.Inner.Value}:{EventuallyStepMethods.Attempts}");
                 }
             }
             """);
@@ -412,18 +426,19 @@ public partial class ExecutorGeneratorTests
     }
 
     [Test]
-    public async Task GeneratedContextCompilesWithoutCs0282()
+    public async Task FunctionCompositeGeneratesNoInstanceContextOrCs0282Suppression()
     {
         var generated = await Generate("""
-            internal readonly ref partial struct ReadName(int value) : IStep<string>
+            internal static class ReadNameStepMethods
             {
-                public string Execute(CancellationToken token) => $"{DisplayName}:{value}";
+                [Step]
+                internal static int ReadName(int value, CancellationToken token) => value;
             }
 
-            [CompositeStep]
-            public readonly ref partial struct Names(int value)
+            public static partial class Names
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, int value, [FromServices] ILogger __logger)
                 {
                     var readable = steps.ReadName(value).WithDisplayName("Readable");
                 }
@@ -432,7 +447,8 @@ public partial class ExecutorGeneratorTests
 
         await NoErrors(generated);
         await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "CS0282")).IsFalse();
-        await Assert.That(generated.GeneratedSource).Contains("required string DisplayName");
+        await Assert.That(generated.GeneratedSource.Contains("required string DisplayName")).IsFalse();
+        await Assert.That(generated.GeneratedSource).Contains("__TedToolkitCompositeStepState");
     }
 
     [Test]
@@ -441,22 +457,24 @@ public partial class ExecutorGeneratorTests
         var value = await Run("""
             namespace A_B
             {
-                internal readonly ref partial struct C : IStep<string>
+                internal static class CStepMethods
                 {
-                    public string Execute(CancellationToken token) => DisplayName;
+                    [Step]
+                    internal static string C(CancellationToken token) => "first";
                 }
             }
             namespace A
             {
-                internal readonly ref partial struct B_C : IStep<string>
+                internal static class B_CStepMethods
                 {
-                    public string Execute(CancellationToken token) => DisplayName;
+                    [Step]
+                    internal static string B_C(CancellationToken token) => "second";
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct Both
+            public static partial class Both
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var first = steps.C();
                     var second = steps.B_C();
@@ -466,7 +484,7 @@ public partial class ExecutorGeneratorTests
             {
                 public static Task<string> Run()
                 {
-                    var result = new Both.Pipeline().Execute();
+                    var result = new Both.ConfigurationPipeline().Execute();
                     return Task.FromResult($"{result.First}:{result.Second}");
                 }
             }
@@ -476,28 +494,40 @@ public partial class ExecutorGeneratorTests
     }
 
     [Test]
-    public async Task GeneratedContextHintNamesAreReadableAndDisambiguateOnlyRealCollisions()
+    public async Task CompositeHintNamesAreReadableAndDisambiguateOnlyRealCollisions()
     {
         var generated = await Generate("""
             namespace A_B
             {
-                internal readonly ref partial struct C : IStep { public void Execute(CancellationToken token) { } }
+                internal static partial class C
+                {
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps) { } }
             }
             namespace A
             {
-                internal readonly ref partial struct B_C : IStep { public void Execute(CancellationToken token) { } }
+                internal static partial class B_C
+                {
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps) { } }
             }
             namespace Demo
             {
-                internal readonly ref partial struct e : IStep { public void Execute(CancellationToken token) { } }
-                internal readonly ref partial struct e\u0301 : IStep { public void Execute(CancellationToken token) { } }
+                internal static partial class e
+                {
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps) { } }
+                internal static partial class e\u0301
+                {
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps) { } }
             }
             namespace @class
             {
-                [CompositeStep]
-                public readonly ref partial struct @event
+                public static partial class @event
                 {
-                    private void Configuration(StepGraph steps) { }
+                    [Pipeline]
+                    public static void Configuration(StepGraph steps) { }
                 }
             }
             """);
@@ -505,17 +535,17 @@ public partial class ExecutorGeneratorTests
 
         var hintNames = generated.Compilation.SyntaxTrees
             .Select(tree => Path.GetFileName(tree.FilePath))
-            .Where(path => path.EndsWith(".StepContext.g.cs", StringComparison.Ordinal))
+            .Where(path => path.EndsWith(".CompositeStep.g.cs", StringComparison.Ordinal))
             .ToArray();
 
         await Assert.That(hintNames.Length).IsEqualTo(5);
         await Assert.That(hintNames.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(5);
-        await Assert.That(hintNames).Contains("A_B.C.StepContext.g.cs");
-        await Assert.That(hintNames).Contains("A.B_C.StepContext.g.cs");
-        await Assert.That(hintNames).Contains("class.event.StepContext.g.cs");
+        await Assert.That(hintNames).Contains("A_B.C.CompositeStep.g.cs");
+        await Assert.That(hintNames).Contains("A.B_C.CompositeStep.g.cs");
+        await Assert.That(hintNames).Contains("class.event.CompositeStep.g.cs");
         await Assert.That(hintNames.Count(name => name.StartsWith("Demo.e", StringComparison.Ordinal))).IsEqualTo(2);
         await Assert.That(hintNames.Any(name => System.Text.RegularExpressions.Regex.IsMatch(
-            name, @"\.[0-9a-f]{64}\.StepContext\.g\.cs$"))).IsFalse();
+            name, @"\.[0-9a-f]{64}\.CompositeStep\.g\.cs$"))).IsFalse();
     }
 
     [Test]
@@ -543,22 +573,24 @@ public partial class ExecutorGeneratorTests
                 }
             }
 
-            [StepLogger]
-            internal readonly ref partial struct Work : IStep<string>
+            internal static class WorkStepMethods
             {
                 private static int attempts;
-                public string Execute(CancellationToken token)
+                [Step]
+                internal static string Work(
+                    [FromServices] ILogger logger,
+                    CancellationToken token)
                 {
-                    Logger.LogInformation("attempt");
+                    logger.LogInformation("attempt");
                     if (++attempts == 1) throw new InvalidOperationException("retry");
-                    return DisplayName;
+                    return CaptureLoggerFactory.Category;
                 }
             }
 
-            [CompositeStep]
-            public readonly ref partial struct LoggedWork
+            public static partial class LoggedWork
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var work = steps.Work().WithDisplayName("Friendly").WithRetry(1);
                 }
@@ -572,13 +604,14 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection()
                         .AddSingleton<ILoggerFactory>(factory)
                         .BuildServiceProvider();
-                    var result = new LoggedWork.Pipeline(services).Execute();
+                    var result = new LoggedWork.ConfigurationPipeline(services).Execute();
                     return Task.FromResult($"{result.Work}:{CaptureLoggerFactory.Category}:{CaptureLoggerFactory.Creations}");
                 }
             }
             """);
 
-        await Assert.That(value).IsEqualTo("Friendly:Work[Friendly]:1");
+        await Assert.That(value).IsEqualTo(
+            "WorkStepMethods.Work[LoggedWork/Friendly]:WorkStepMethods.Work[LoggedWork/Friendly]:1");
     }
 
     [Test]
@@ -598,16 +631,16 @@ public partial class ExecutorGeneratorTests
                 public void AddProvider(ILoggerProvider provider) { }
                 public void Dispose() { }
             }
-            internal readonly ref partial struct Touch : IStep<int>
+            internal static class TouchStepMethods
             {
                 public static int Attempts;
-                public int Execute(CancellationToken token) { Attempts++; return 42; }
+                [Step]
+                internal static int Touch(CancellationToken token) { Attempts++; return 42; }
             }
-            [StepLogger]
-            [CompositeStep]
-            public readonly ref partial struct LoggedRoot
+            public static partial class LoggedRoot
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, [FromServices] ILogger __logger)
                 {
                     var value = steps.Touch();
                 }
@@ -619,13 +652,13 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection()
                         .AddSingleton<ILoggerFactory, CaptureLoggerFactory>()
                         .BuildServiceProvider();
-                    var result = new LoggedRoot.Pipeline(services).Execute();
-                    return Task.FromResult($"{result.Value}:{CaptureLoggerFactory.Category}:{CaptureLoggerFactory.Creations}:{Touch.Attempts}");
+                    var result = new LoggedRoot.ConfigurationPipeline(services).Execute();
+                    return Task.FromResult($"{result.Value}:{CaptureLoggerFactory.Category}:{CaptureLoggerFactory.Creations}:{TouchStepMethods.Attempts}");
                 }
             }
             """);
 
-        await Assert.That(value).IsEqualTo("42:LoggedRoot[LoggedRoot]:1:1");
+        await Assert.That(value).IsEqualTo("42:LoggedRoot.Configuration[LoggedRoot]:1:1");
     }
 
     [Test]
@@ -645,28 +678,28 @@ public partial class ExecutorGeneratorTests
                 public void AddProvider(ILoggerProvider provider) { }
                 public void Dispose() { }
             }
-            internal readonly ref partial struct Eventually : IStep<int>
+            internal static class EventuallyStepMethods
             {
                 public static int Attempts;
-                public int Execute(CancellationToken token)
+                [Step]
+                internal static int Eventually(CancellationToken token)
                 {
                     if (++Attempts == 1) throw new InvalidOperationException("retry");
                     return 42;
                 }
             }
-            [StepLogger]
-            [CompositeStep]
-            public readonly ref partial struct LoggedInner
+            public static partial class LoggedInner
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, [FromServices] ILogger __logger)
                 {
                     var value = steps.Eventually();
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct LoggedOuter
+            public static partial class LoggedOuter
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var inner = steps.LoggedInner()
                         .WithDisplayName("Friendly Composite")
@@ -680,29 +713,30 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection()
                         .AddSingleton<ILoggerFactory, CaptureLoggerFactory>()
                         .BuildServiceProvider();
-                    var result = new LoggedOuter.Pipeline(services).Execute();
-                    return Task.FromResult($"{result.Inner.Value}:{CaptureLoggerFactory.Category}:{CaptureLoggerFactory.Creations}:{Eventually.Attempts}");
+                    var result = new LoggedOuter.ConfigurationPipeline(services).Execute();
+                    return Task.FromResult($"{result.Inner.Value}:{CaptureLoggerFactory.Category}:{CaptureLoggerFactory.Creations}:{EventuallyStepMethods.Attempts}");
                 }
             }
             """);
 
-        await Assert.That(value).IsEqualTo("42:LoggedInner[Friendly Composite]:1:2");
+        await Assert.That(value).IsEqualTo(
+            "42:LoggedInner.Configuration[LoggedOuter/Friendly Composite]:1:2");
     }
 
     [Test]
     public async Task MissingRootCompositeLoggerFailsBeforeTheFirstChildAttempt()
     {
         var value = await Run("""
-            internal readonly ref partial struct Touch : IStep
+            internal static class TouchStepMethods
             {
                 public static int Attempts;
-                public void Execute(CancellationToken token) => Attempts++;
+                [Step]
+                internal static void Touch(CancellationToken token) => Attempts++;
             }
-            [StepLogger]
-            [CompositeStep]
-            public readonly ref partial struct LoggedRoot
+            public static partial class LoggedRoot
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, [FromServices] ILogger __logger)
                 {
                     steps.Touch();
                 }
@@ -714,12 +748,12 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection().BuildServiceProvider();
                     try
                     {
-                        new LoggedRoot.Pipeline(services).ExecuteWithoutResults();
+                        new LoggedRoot.ConfigurationPipeline(services).ExecuteWithoutResults();
                         return Task.FromResult("unexpected");
                     }
                     catch (InvalidOperationException)
                     {
-                        return Task.FromResult(Touch.Attempts.ToString());
+                        return Task.FromResult(TouchStepMethods.Attempts.ToString());
                     }
                 }
             }
@@ -743,16 +777,18 @@ public partial class ExecutorGeneratorTests
                 public void AddProvider(ILoggerProvider provider) { }
                 public void Dispose() { }
             }
-            [StepLogger]
-            internal readonly ref partial struct Logged : IStep
+            internal static class LoggedStepMethods
             {
                 public static int Attempts;
-                public void Execute(CancellationToken token) => Attempts++;
+                [Step]
+                internal static void Logged(
+                    [FromServices] ILogger logger,
+                    CancellationToken token) => Attempts++;
             }
-            [CompositeStep]
-            public readonly ref partial struct LoggingFailure
+            public static partial class LoggingFailure
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     steps.Logged().WithRetry(2);
                 }
@@ -766,12 +802,12 @@ public partial class ExecutorGeneratorTests
                         .BuildServiceProvider();
                     try
                     {
-                        new LoggingFailure.Pipeline(services).ExecuteWithoutResults();
+                        new LoggingFailure.ConfigurationPipeline(services).ExecuteWithoutResults();
                         return Task.FromResult("unexpected");
                     }
                     catch (InvalidOperationException exception)
                     {
-                        return Task.FromResult($"{ThrowingLoggerFactory.Creations}:{Logged.Attempts}:{exception.Message}");
+                        return Task.FromResult($"{ThrowingLoggerFactory.Creations}:{LoggedStepMethods.Attempts}:{exception.Message}");
                     }
                 }
             }
@@ -784,16 +820,18 @@ public partial class ExecutorGeneratorTests
     public async Task MissingLoggerFactoryFailsBeforeTheFirstAttempt()
     {
         var value = await Run("""
-            [StepLogger]
-            internal readonly ref partial struct Logged : IStep
+            internal static class LoggedStepMethods
             {
                 public static int Attempts;
-                public void Execute(CancellationToken token) => Attempts++;
+                [Step]
+                internal static void Logged(
+                    [FromServices] ILogger logger,
+                    CancellationToken token) => Attempts++;
             }
-            [CompositeStep]
-            public readonly ref partial struct MissingLogging
+            public static partial class MissingLogging
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     steps.Logged().WithRetry(2);
                 }
@@ -805,12 +843,12 @@ public partial class ExecutorGeneratorTests
                     var services = new ServiceCollection().BuildServiceProvider();
                     try
                     {
-                        new MissingLogging.Pipeline(services).ExecuteWithoutResults();
+                        new MissingLogging.ConfigurationPipeline(services).ExecuteWithoutResults();
                         return Task.FromResult("unexpected");
                     }
                     catch (InvalidOperationException)
                     {
-                        return Task.FromResult(Logged.Attempts.ToString());
+                        return Task.FromResult(LoggedStepMethods.Attempts.ToString());
                     }
                 }
             }
@@ -828,18 +866,20 @@ public partial class ExecutorGeneratorTests
                 public bool Ready;
                 public bool Observed;
             }
-            internal readonly ref partial struct Prepare([FromServices] State state) : IStep
+            internal static class PrepareStepMethods
             {
-                public void Execute(CancellationToken token) => state.Ready = true;
+                [Step]
+                internal static void Prepare([FromServices] State state, CancellationToken token) => state.Ready = true;
             }
-            internal readonly ref partial struct Observe([FromServices] State state) : IStep
+            internal static class ObserveStepMethods
             {
-                public void Execute(CancellationToken token) => state.Observed = state.Ready;
+                [Step]
+                internal static void Observe([FromServices] State state, CancellationToken token) => state.Observed = state.Ready;
             }
-            [CompositeStep]
-            public readonly ref partial struct Ordered
+            public static partial class Ordered
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps)
                 {
                     var prepare = steps.Prepare();
                     steps.Observe().DependsOn(prepare);
@@ -851,7 +891,7 @@ public partial class ExecutorGeneratorTests
                 {
                     var state = new State();
                     var services = new ServiceCollection().AddSingleton(state).BuildServiceProvider();
-                    new Ordered.Pipeline(services).ExecuteWithoutResults();
+                    new Ordered.ConfigurationPipeline(services).ExecuteWithoutResults();
                     return Task.FromResult(state.Observed.ToString());
                 }
             }
@@ -870,9 +910,10 @@ public partial class ExecutorGeneratorTests
                 public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 public int Cleaned;
             }
-            internal readonly ref partial struct Slow(State state) : IAsyncStep<int>
+            internal static class SlowStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) => Run(state, token);
+                [Step]
+                internal static Task<int> Slow(State state, CancellationToken token) => Run(state, token);
                 private static async Task<int> Run(State state, CancellationToken token)
                 {
                     state.Started.TrySetResult();
@@ -887,28 +928,29 @@ public partial class ExecutorGeneratorTests
                     }
                 }
             }
-            internal readonly ref partial struct Fail(State state) : IAsyncStep<int>
+            internal static class FailStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) => Run(state, token);
+                [Step]
+                internal static Task<int> Fail(State state, CancellationToken token) => Run(state, token);
                 private static async Task<int> Run(State state, CancellationToken token)
                 {
                     await state.Started.Task;
                     throw state.Expected;
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct InnerFailure(State state)
+            public static partial class InnerFailure
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, State state)
                 {
                     var slow = steps.Slow(state);
                     var failure = steps.Fail(state);
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct OuterFailure(State state)
+            public static partial class OuterFailure
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, State state)
                 {
                     var inner = steps.InnerFailure(state);
                 }
@@ -920,7 +962,7 @@ public partial class ExecutorGeneratorTests
                     var state = new State();
                     try
                     {
-                        await new OuterFailure.Pipeline().ExecuteAsync(state);
+                        await new OuterFailure.ConfigurationPipeline().ExecuteAsync(state);
                         return "unexpected";
                     }
                     catch (Exception failure)
@@ -943,9 +985,10 @@ public partial class ExecutorGeneratorTests
                 public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 public int Cleaned;
             }
-            internal readonly ref partial struct Wait(State state) : IAsyncStep<int>
+            internal static class WaitStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) => Run(state, token);
+                [Step]
+                internal static Task<int> Wait(State state, CancellationToken token) => Run(state, token);
                 private static async Task<int> Run(State state, CancellationToken token)
                 {
                     state.Started.TrySetResult();
@@ -960,18 +1003,18 @@ public partial class ExecutorGeneratorTests
                     }
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct InnerCancellation(State state)
+            public static partial class InnerCancellation
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, State state)
                 {
                     var waiting = steps.Wait(state);
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct OuterCancellation(State state)
+            public static partial class OuterCancellation
             {
-                private void Configuration(StepGraph steps)
+                [Pipeline]
+                public static void Configuration(StepGraph steps, State state)
                 {
                     var inner = steps.InnerCancellation(state);
                 }
@@ -982,7 +1025,7 @@ public partial class ExecutorGeneratorTests
                 {
                     var state = new State();
                     using var cancellation = new CancellationTokenSource();
-                    var execution = new OuterCancellation.Pipeline().ExecuteAsync(state, cancellation.Token);
+                    var execution = new OuterCancellation.ConfigurationPipeline().ExecuteAsync(state, cancellation.Token);
                     await state.Started.Task;
                     cancellation.Cancel();
                     try
@@ -1002,62 +1045,18 @@ public partial class ExecutorGeneratorTests
     }
 
     [Test]
-    [Arguments("public Invalid(int value) { }")]
-    [Arguments("public Invalid() { }")]
-    [Arguments("public Invalid() { } public Invalid(int value) { }")]
-    public async Task CompositeOrdinaryConstructorsAreRejected(string constructors)
+    public async Task InvalidFunctionLeafDoesNotReceiveGeneratedContext()
     {
         var generated = await Generate("""
-            [CompositeStep]
-            public readonly ref partial struct Invalid
+            internal static partial class InvalidLeaf
             {
-                CONSTRUCTORS
-                private void Configuration(StepGraph steps) { }
-            }
-            """.Replace("CONSTRUCTORS", constructors));
-
-        await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "TTP009")).IsTrue();
-        await Assert.That(generated.GeneratedSource.Contains("required string DisplayName")).IsFalse();
-    }
-
-    [Test]
-    public async Task CompositeWithoutConfigurationIsRejectedAndCs0282IsNotSuppressed()
-    {
-        var generated = await Generate("""
-            [CompositeStep]
-            public readonly ref partial struct MissingConfiguration
-            {
-                private readonly int first;
-            }
-            public readonly ref partial struct MissingConfiguration
-            {
-                private readonly int second;
-            }
-            """);
-
-        await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "TTP009")).IsTrue();
-        await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "CS0282")).IsTrue();
-        await Assert.That(generated.GeneratedSource.Contains("required string DisplayName")).IsFalse();
-    }
-
-    [Test]
-    public async Task InvalidMultiContractLeafDoesNotReceiveContextOrCs0282Suppression()
-    {
-        var generated = await Generate("""
-            internal readonly ref partial struct InvalidLeaf : IStep, IAsyncStep
-            {
-                private readonly int first;
-                public void Execute(CancellationToken token) { }
-                public Task ExecuteAsync(CancellationToken token) => Task.CompletedTask;
-            }
-            internal readonly ref partial struct InvalidLeaf
-            {
-                private readonly int second;
+                [Step]
+                private static void Run(CancellationToken token) { }
             }
             """);
 
         await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "TTP013")).IsTrue();
-        await Assert.That(generated.Diagnostics.Any(diagnostic => diagnostic.Id == "CS0282")).IsTrue();
         await Assert.That(generated.GeneratedSource.Contains("required string DisplayName")).IsFalse();
+        await Assert.That(generated.GeneratedSource.Contains("partial class InvalidLeaf")).IsFalse();
     }
 }

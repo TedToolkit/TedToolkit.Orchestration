@@ -11,10 +11,10 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
 {
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-        ImmutableArray.Create(PipelineDiagnostics.StaticGraph, PipelineDiagnostics.StepMustBeInternal,
-            PipelineDiagnostics.InvalidContract,
+        ImmutableArray.Create(PipelineDiagnostics.StaticGraph, PipelineDiagnostics.InvalidContract,
             PipelineDiagnostics.FactoryOutsideConfiguration, PipelineDiagnostics.ConfigurationInvocation,
-            PipelineDiagnostics.ModifierOutsideConfiguration);
+            PipelineDiagnostics.ModifierOutsideConfiguration, PipelineDiagnostics.InvalidPipeline,
+            PipelineDiagnostics.InvalidProtocol);
 
     /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
@@ -23,29 +23,42 @@ public sealed class PipelineAnalyzer : DiagnosticAnalyzer
         context.EnableConcurrentExecution();
         context.RegisterCompilationStartAction(start =>
         {
-            if (start.Compilation.GetTypeByMetadataName(StepSymbols.StepName) is null) return;
-            start.RegisterSymbolAction(AnalyzeStep, SymbolKind.NamedType);
+            if (start.Compilation.GetTypeByMetadataName(StepSymbols.StepAttributeName) is null) return;
+            start.RegisterSymbolAction(AnalyzeStep, SymbolKind.Method);
             start.RegisterOperationAction(AnalyzeInvocation, OperationKind.Invocation);
         });
     }
 
     private static void AnalyzeStep(SymbolAnalysisContext context)
     {
-        var type = (INamedTypeSymbol)context.Symbol;
-        if (StepContextEmitter.HasAttribute(type, StepContextEmitter.CompositeAttributeName))
+        var method = (IMethodSymbol)context.Symbol;
+        if (StepSymbols.IsLeafStep(method))
         {
-            var compositeReason = CompositeStepGenerator.ContractError(type, context.Compilation);
-            if (compositeReason is not null)
-                context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StaticGraph,
-                    type.Locations[0], compositeReason));
+            var reason = StepSymbols.InvalidContract(method, context.Compilation);
+            if (reason is not null)
+                context.ReportDiagnostic(Diagnostic.Create(
+                    PipelineDiagnostics.InvalidContract, method.Locations[0], method.Name, reason));
+        }
+        if (PipelineSymbols.IsCompositeCandidate(method, context.Compilation))
+        {
+            var reason = CompositeStepGenerator.ContractError(method, context.Compilation);
+            if (reason is not null)
+                context.ReportDiagnostic(Diagnostic.Create(
+                    PipelineDiagnostics.StaticGraph, method.Locations[0], reason));
+        }
+        if (!StepSymbols.IsPipeline(method)) return;
+        if (!StepSymbols.IsLeafStep(method) &&
+            !PipelineSymbols.IsCompositeCandidate(method, context.Compilation))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                PipelineDiagnostics.InvalidPipeline, method.Locations[0], method.Name,
+                "Pipeline can mark only a valid Step or Configuration method"));
             return;
         }
-        if (!StepSymbols.IsLeafStep(type, context.Compilation)) return;
-        if (type.DeclaredAccessibility != Accessibility.Internal || type.IsFileLocal)
-            context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.StepMustBeInternal, type.Locations[0], type.Name));
-        var reason = StepSymbols.InvalidContract(type, context.Compilation);
-        if (reason is not null)
-            context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.InvalidContract, type.Locations[0], type.Name, reason));
+        var pipelineReason = PipelineFacadeEmitter.ContractError(method);
+        if (pipelineReason is not null)
+            context.ReportDiagnostic(Diagnostic.Create(PipelineDiagnostics.InvalidPipeline,
+                method.Locations[0], method.Name, pipelineReason));
     }
 
     private static void AnalyzeInvocation(OperationAnalysisContext context)
