@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis;
@@ -19,18 +20,29 @@ internal static class GeneratedCode
         return Type(arguments.Length == 0 ? type : type.Construct(arguments));
     }
     internal static DataType TaskOf(ITypeSymbol? result) => result is null ? DataType.Task : DataType.TaskOf(Type(result));
-    internal static (string Name, DataType ReturnType) ExecutionSignature(
-        bool asynchronous, bool discardResults) =>
-        ((discardResults ? "ExecuteWithoutResults" : "Execute") + (asynchronous ? "Async" : ""),
-            asynchronous
-                ? discardResults ? DataType.Task : DataType.TaskOf(new DataType("Results"))
-                : discardResults ? DataType.Void : new DataType("Results"));
+    internal static DataType ServiceLookupType(
+        ITypeSymbol type, Func<ITypeSymbol, DataType>? render = null) =>
+        type.TypeKind == TypeKind.Dynamic
+            ? DataType.FromType(typeof(object))
+            : (render ?? Type)(type.WithNullableAnnotation(NullableAnnotation.NotAnnotated));
     internal static InvocationExpression Call(string name, params IExpression[] arguments) => Name(name).Invoke(arguments);
     internal static InvocationExpression Call(IExpression target, params IExpression[] arguments) => target.Invoke(arguments);
     internal static ObjectCreationExpression New(DataType type, params IExpression[] arguments) => type.New.AddArguments(arguments);
     internal static IExpression Await(IExpression expression) => expression.ConfigureAwait(false).Await();
     internal static VariableExpression Variable(string name, IExpression value, DataType? type = null) =>
         new VariableExpression(type ?? DataType.Var, name).AddDefault(value);
+
+    internal static IExpression ExplicitDefault(
+        IParameterSymbol parameter, Func<ITypeSymbol, string>? typeName = null)
+    {
+        if (!parameter.HasExplicitDefaultValue || parameter.ExplicitDefaultValue is null)
+            return SimpleNameExpression.Default;
+        var value = Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatPrimitive(
+            parameter.ExplicitDefaultValue, quoteStrings: true, useHexadecimalNumbers: false)!;
+        if (parameter.Type.TypeKind == TypeKind.Enum)
+            return Name("(" + (typeName ?? StepSymbols.TypeName)(parameter.Type) + ")" + value);
+        return Name(value);
+    }
 
     internal static string Render(string nameSpace, params IMember[] members)
     {

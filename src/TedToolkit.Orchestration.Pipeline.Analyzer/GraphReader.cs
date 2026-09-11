@@ -9,7 +9,7 @@ using Microsoft.CodeAnalysis.Operations;
 
 namespace TedToolkit.Orchestration.Pipeline.Analyzer;
 
-// Configuration is declaration-only; expressions are mirrored into per-step execution methods.
+// A Composite function is declaration-only; expressions are mirrored into per-step execution methods.
 internal sealed class GraphReader
 {
     private readonly Action<Diagnostic> _reportDiagnostic;
@@ -48,23 +48,28 @@ internal sealed class GraphReader
                 if (invocation.Arguments.FirstOrDefault()?.Value is not IParameterReferenceOperation receiver || !SymbolEqualityComparer.Default.Equals(receiver.Parameter, parameter))
                 { Fail(call, "use the configuration builder parameter directly"); continue; }
                 var factory = _factories.FirstOrDefault(item =>
-                    SymbolEqualityComparer.Default.Equals(
-                        invocation.TargetMethod.ContainingType, item.ExtensionsIn(_model.Compilation)));
+                    item.Name == invocation.TargetMethod.Name && item.OwnsExtensionType(
+                        invocation.TargetMethod.ContainingType, _model.Compilation));
                 if (factory is null) { Fail(call, "unknown step factory"); continue; }
                 var variable = (statement as LocalDeclarationStatementSyntax)?.Declaration.Variables[0];
-                var name = variable?.Identifier.ValueText ?? factory.Type.Name + _nodes.Count;
-                var displayName = variable?.Identifier.ValueText ?? factory.Type.Name + "#" + (_nodes.Count + 1);
+                var name = variable?.Identifier.ValueText ?? factory.Name + _nodes.Count;
+                var displayName = variable?.Identifier.ValueText ?? factory.Name + "#" + (_nodes.Count + 1);
                 var node = new GraphNode(factory)
                     { Index = _nodes.Count, Name = name, DisplayName = displayName };
                 foreach (var argument in invocation.Arguments.Where(item => item.Parameter!.Ordinal != 0).OrderBy(item => item.Parameter!.Ordinal))
                 {
-                    var binding = ReadBinding(argument, factory.Parameters[argument.Parameter!.Ordinal - 1]);
+                    var binding = ReadBinding(argument,
+                        factory.Parameters[argument.Parameter!.Ordinal - 1], factory);
                     node.Arguments.Add(binding);
                 }
                 ApplyModifiers(node, modifiers);
                 _nodes.Add(node);
                 if (variable is not null && _model.GetDeclaredSymbol(variable) is ILocalSymbol symbol) _locals.Add(symbol, node);
             }
+            else if (expression is InvocationExpressionSyntax ambiguous &&
+                IsAmbiguousFactoryCall(ambiguous, parameter))
+                Fail(ambiguous,
+                    "step factory call is ambiguous; call the generated extension type explicitly");
             else if (statement is LocalDeclarationStatementSyntax alias && alias.Declaration.Variables.Count == 1 &&
                 alias.Declaration.Variables[0] is { Initializer.Value: IdentifierNameSyntax identifier } declarator &&
                 _model.GetSymbolInfo(identifier).Symbol is ILocalSymbol source && _locals.TryGetValue(source, out var sourceNode) &&
@@ -194,6 +199,8 @@ internal sealed class GraphReader
 
     private void ValidateUsage(IParameterSymbol parameter, HashSet<InvocationExpressionSyntax> seen)
     {
+        var cancellation = ((IMethodSymbol)_model.GetDeclaredSymbol(_configure)!).Parameters
+            .FirstOrDefault(StepSymbols.IsCancellationToken);
         foreach (var call in _configure.Body!.DescendantNodes().OfType<InvocationExpressionSyntax>())
             if (_model.GetOperation(call) is IInvocationOperation invocation && !seen.Contains(call))
             {
@@ -219,6 +226,8 @@ internal sealed class GraphReader
                 if (!extensionReceiver && !staticReceiver)
                     Fail(identifier, "the configuration builder cannot escape or be aliased");
             }
+            if (cancellation is not null && SymbolEqualityComparer.Default.Equals(symbol, cancellation))
+                Fail(identifier, "the Composite CancellationToken is execution control and cannot be referenced in the static graph");
             if (symbol is ILocalSymbol local && (_locals.ContainsKey(local) || _values.ContainsKey(local)) && identifier.Ancestors().TakeWhile(item => item is not StatementSyntax).Any(item =>
                 item is AssignmentExpressionSyntax assignment && assignment.Left.Span.Contains(identifier.Span) ||
                 item is ArgumentSyntax argument && !argument.RefKindKeyword.IsKind(SyntaxKind.None) || item is RefExpressionSyntax ||
@@ -230,22 +239,49 @@ internal sealed class GraphReader
 
     private void AssignNames()
     {
-        var resultNames = new HashSet<string>(StringComparer.Ordinal) { "Results" };
+        var declaration = (IMethodSymbol)_model.GetDeclaredSymbol(_configure)!;
+        var resultNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            CompositeStepGenerator.ResultTypeName(declaration),
+        };
         foreach (var node in _nodes)
             if (node.Factory.Result is not null && !resultNames.Add(node.ResultName)) Fail(_configure, "result names collide; give the nodes distinct names");
     }
 
-    private static bool IsFactory(IInvocationOperation invocation, ITypeSymbol builder) =>
-        invocation.TargetMethod.IsExtensionMethod &&
-        SymbolEqualityComparer.Default.Equals(invocation.TargetMethod.Parameters.FirstOrDefault()?.Type, builder);
+    private bool IsFactory(IInvocationOperation invocation, ITypeSymbol builder) =>
+        invocation.TargetMethod.IsStatic && invocation.TargetMethod.Parameters.Length != 0 &&
+        SymbolEqualityComparer.Default.Equals(invocation.TargetMethod.Parameters[0].Type, builder) &&
+        _factories.Any(factory => factory.Name == invocation.TargetMethod.Name &&
+            factory.OwnsExtensionType(invocation.TargetMethod.ContainingType, _model.Compilation));
 
-    private NodeArgument ReadBinding(IArgumentOperation argument, IParameterSymbol parameter)
+    private bool IsAmbiguousFactoryCall(
+        InvocationExpressionSyntax call, IParameterSymbol builderParameter)
+    {
+        if (call.Expression is not MemberAccessExpressionSyntax member ||
+            _model.GetSymbolInfo(member.Expression).Symbol is not IParameterSymbol receiver ||
+            !SymbolEqualityComparer.Default.Equals(receiver, builderParameter))
+            return false;
+        var name = member.Name.Identifier.ValueText;
+        var argumentCount = call.ArgumentList.Arguments.Count;
+        return _factories.Count(factory => factory.Name == name &&
+            argumentCount <= factory.Parameters.Length &&
+            argumentCount >= factory.Parameters.Count(parameter => !parameter.HasExplicitDefaultValue)) > 1;
+    }
+
+    private NodeArgument ReadBinding(
+        IArgumentOperation argument, IParameterSymbol parameter, StepFactory factory)
     {
         var value = argument.Value;
         while (value is IConversionOperation conversion) value = conversion.Operand;
         if (argument.ArgumentKind == ArgumentKind.DefaultValue || value is IDefaultValueOperation && SymbolEqualityComparer.Default.Equals(value.Type, argument.Parameter!.Type))
         {
-            Fail(argument.Syntax, "Composite Step registrations must bind every data input");
+            if (parameter.HasExplicitDefaultValue)
+                return new NodeArgument
+                {
+                    IsConstant = true,
+                    Expression = GeneratedCode.ExplicitDefault(parameter, factory.TypeName),
+                };
+            Fail(argument.Syntax, "Composite Step registrations must bind every data input without a declared default");
             return new NodeArgument();
         }
         if (value is ILocalReferenceOperation local && _locals.TryGetValue(local.Local, out var node))
@@ -260,12 +296,12 @@ internal sealed class GraphReader
             return new NodeArgument { Source = node };
         }
         var type = value.Type as INamedTypeSymbol;
-        if (type is not null && (SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.BuilderName)) ||
-            SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.ArgumentName))))
+        if (type is not null && (SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.BUILDER_NAME)) ||
+            SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.ARGUMENT_NAME))))
             Fail(argument.Syntax, "bindings must be a fixed value or a previously declared node");
         var expression = argument.Syntax is ArgumentSyntax syntax ? syntax.Expression : (ExpressionSyntax)argument.Value.Syntax;
         while (_model.GetTypeInfo(expression).Type is INamedTypeSymbol expressionType &&
-            SymbolEqualityComparer.Default.Equals(expressionType.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.ArgumentName)))
+            SymbolEqualityComparer.Default.Equals(expressionType.OriginalDefinition, _model.Compilation.GetTypeByMetadataName(StepSymbols.ARGUMENT_NAME)))
         {
             if (expression is ParenthesizedExpressionSyntax parentheses) expression = parentheses.Expression;
             else if (expression is CastExpressionSyntax cast) expression = cast.Expression;
@@ -315,6 +351,5 @@ internal sealed class LocalValue
     internal ITypeSymbol? Type { get; set; }
     internal TedToolkit.RoslynHelper.IExpression Expression { get; set; } = null!;
 }
-
 
 

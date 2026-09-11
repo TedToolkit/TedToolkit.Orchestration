@@ -29,6 +29,9 @@ internal static class GeneratedNames
     internal static string HintName(INamedTypeSymbol type, string suffix) =>
         MetadataName(type).ToHintNameKeepDot() + suffix;
 
+    internal static string HintName(IMethodSymbol method, string suffix) =>
+        (MetadataName(method.ContainingType) + "." + method.Name).ToHintNameKeepDot() + suffix;
+
     internal static string DisambiguateHintName(string hintName, string identity, string suffix)
     {
         var result = new StringBuilder(hintName.Length + 13);
@@ -54,8 +57,31 @@ internal static class GeneratedNames
         return string.Join("_", segments).ToValidIdentifier();
     }
 
+    internal static string ExtensionTypeName(IMethodSymbol method,
+        bool includeNamespace = false, bool includeAssembly = false)
+    {
+        var type = method.ContainingType;
+        var segments = new List<string>();
+        if (includeAssembly)
+            segments.Add(type.ContainingAssembly.Identity.Name.ToHintName());
+        if (includeNamespace)
+        {
+            if (type.ContainingNamespace.IsGlobalNamespace)
+                segments.Add("Global");
+            else
+                segments.AddRange(NamespaceSegments(type.ContainingNamespace).Select(EscapeSegment));
+        }
+        segments.Add(EscapeSegment(type.Name));
+        segments.Add(EscapeSegment(method.Name) + "Extensions");
+        return string.Join("_", segments).ToValidIdentifier();
+    }
+
     internal static string DisambiguateIdentifier(string identifier, INamedTypeSymbol type) =>
         StableSuffix(type.ContainingAssembly.Identity + "|" + MetadataName(type)) + "_" + identifier;
+
+    internal static string DisambiguateIdentifier(string identifier, IMethodSymbol method) =>
+        StableSuffix(method.ContainingAssembly.Identity + "|" +
+            MetadataName(method.ContainingType) + "|" + method.Name) + "_" + identifier;
 
     private static IEnumerable<string> NamespaceSegments(INamespaceSymbol value)
     {

@@ -8,18 +8,29 @@ var services = new ServiceCollection();
 services.AddScoped<IResultFormatter, ResultFormatter>();
 await using var provider = services.BuildServiceProvider();
 await using var scope = provider.CreateAsyncScope();
-var executor = new DemoPipeline.Pipeline(scope.ServiceProvider);
+var executor = new DemoPipeline.RunPipeline(scope.ServiceProvider);
 var first = await executor.ExecuteAsync(leftValue: 1, formatLabel: "sum");
-Console.WriteLine($"{first.Format} (value: {first.Add})");
+Console.WriteLine($"{first.Calculation.Format} (value: {first.Calculation.Add})");
 var second = await executor.ExecuteAsync(leftValue: 8, formatLabel: "again");
-Console.WriteLine($"{second.Format} (value: {second.Add})");
-await executor.ExecuteWithoutResultsAsync(leftValue: 3, formatLabel: "no snapshot");
+Console.WriteLine($"{second.Calculation.Format} (value: {second.Calculation.Add})");
+await executor.ExecuteAsync(leftValue: 3, formatLabel: "ignored result");
 
-/// <summary>Its execution parameters and typed results are generated from this configuration.</summary>
-[CompositeStep]
-public readonly ref partial struct DemoPipeline(int leftValue, string formatLabel)
+/// <summary>Exposes the reusable Composite Step as a root Pipeline.</summary>
+public static partial class DemoPipeline
 {
-    private void Configuration(StepGraph pipeline)
+    /// <summary>Declares the root graph and composes a reusable Composite Step.</summary>
+    [Pipeline]
+    public static void Run(StepGraph pipeline, int leftValue, string formatLabel)
+    {
+        var calculation = pipeline.Calculate(leftValue, formatLabel);
+    }
+}
+
+/// <summary>A Composite Step: StepGraph identifies it; no Pipeline attribute is required.</summary>
+public static partial class Calculation
+{
+    /// <summary>Declares the reusable child graph.</summary>
+    public static void Calculate(StepGraph pipeline, int leftValue, string formatLabel)
     {
         var left = pipeline.DelayStep(leftValue).WithRetry(1).WithTimeout(2000);
         var right = pipeline.DelayStep(value: 2).WithRetry(1).WithTimeout(2000);

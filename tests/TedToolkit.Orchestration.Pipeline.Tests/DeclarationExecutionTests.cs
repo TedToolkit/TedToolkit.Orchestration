@@ -6,20 +6,25 @@ public partial class ExecutorGeneratorTests
     public async Task ArgumentFailureHappensBeforeAnyStepAttempt()
     {
         var result = await Run("""
-            internal readonly ref partial struct Work : IStep<int>
+            internal static class WorkStepMethods
             {
-                public Work(int value) { Example.Constructions++; }
-                public int Execute(CancellationToken token) => 42;
+                [Step]
+                internal static int Work(int value, CancellationToken token)
+                {
+                    Example.Constructions++;
+                    return 42;
+                }
             }
-            [CompositeStep]            public readonly ref partial struct Example
+            public static partial class Example
             {
                 public static int Evaluations;
                 public static int Constructions;
                 private static int Fail() { Evaluations++; throw new InvalidOperationException("argument"); }
-                private void Configuration(StepGraph p) { p.Work(Fail()).WithRetry(2); }
+                [Pipeline]
+                public static void Configuration(StepGraph p) { p.Work(Fail()).WithRetry(2); }
             }
             """ + AsyncScenario("""
-                var pipeline = new Example.Pipeline();
+                var pipeline = new Example.ConfigurationPipeline();
                 try { pipeline.Execute(); return "unexpected"; }
                 catch (InvalidOperationException error) { return $"{error.Message}:{Example.Evaluations}:{Example.Constructions}"; }
                 """));
@@ -30,12 +35,13 @@ public partial class ExecutorGeneratorTests
     public async Task ExplicitArgumentMarkersPreserveInnerConversions()
     {
         var result = await Run(NamedSteps + """
-            [CompositeStep]            public readonly ref partial struct Example
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { var sum = p.Add(((StepArgument<int>)(int)40.9), 2); }
+                [Pipeline]
+                public static void Configuration(StepGraph p) { var sum = p.Add(((StepArgument<int>)(int)40.9), 2); }
             }
             """ + AsyncScenario("""
-                return (new Example.Pipeline().Execute()).Sum.ToString();
+                return (new Example.ConfigurationPipeline().Execute()).Sum.ToString();
                 """));
         await Assert.That(result).IsEqualTo("42");
     }
@@ -44,19 +50,20 @@ public partial class ExecutorGeneratorTests
     public async Task ExpressionsWaitForDependenciesAndDoNotRunDuringConstruction()
     {
         var result = await Run(NamedSteps + """
-            internal readonly ref partial struct Wait(Task<int> pending) : IAsyncStep<int>
+            internal static class WaitStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token) => pending;
+                [Step]
+                internal static Task<int> Wait(Task<int> pending, CancellationToken token) => pending;
             }
-            [CompositeStep]
-            public readonly ref partial struct Example(Task<int> pending)
+            public static partial class Example
             {
                 public static int Calls;
                 private static int Next() { Calls++; return 2; }
-                private void Configuration(StepGraph p) { var wait = p.Wait(pending); var sum = p.Add(wait, Next()); }
+                [Pipeline]
+                public static void Configuration(StepGraph p, Task<int> pending) { var wait = p.Wait(pending); var sum = p.Add(wait, Next()); }
             }
             """ + AsyncScenario("""
-                var pipeline = new Example.Pipeline();
+                var pipeline = new Example.ConfigurationPipeline();
                 var before = Example.Calls;
                 var gate = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
                 var pending = pipeline.ExecuteAsync(gate.Task);
@@ -76,29 +83,30 @@ public partial class ExecutorGeneratorTests
     {
         var result = await Run("""
             public sealed class State { public int Evaluations; public int Attempts; public int LastValue; }
-            internal readonly ref partial struct Retry(int value, State state) : IAsyncStep<int>
+            internal static class RetryStepMethods
             {
-                public Task<int> ExecuteAsync(CancellationToken token)
+                [Step]
+                internal static Task<int> Retry(int value, State state, CancellationToken token)
                 {
                     state.LastValue = value;
                     return ++state.Attempts % 2 == 1 ? Task.FromException<int>(new InvalidOperationException()) : Task.FromResult(value);
                 }
             }
-            [CompositeStep]
-            public readonly ref partial struct Example(State state)
+            public static partial class Example
             {
                 private static int Next(State state) => ++state.Evaluations;
-                private void Configuration(StepGraph p) { p.Retry(Next(state), state).WithRetry(1); }
+                [Pipeline]
+                public static void Configuration(StepGraph p, State state) { p.Retry(Next(state), state).WithRetry(1); }
             }
             """ + AsyncScenario("""
                 var state = new State();
-                var pipeline = new Example.Pipeline();
+                var pipeline = new Example.ConfigurationPipeline();
                 var before = state.Evaluations;
                 await pipeline.METHOD(state);
                 var first = state.LastValue;
                 await pipeline.METHOD(state);
                 return $"{before}:{first}:{state.LastValue}:{state.Evaluations}:{state.Attempts}";
-                """.Replace("METHOD", discard ? "ExecuteWithoutResultsAsync" : "ExecuteAsync")));
+                """.Replace("METHOD", "ExecuteAsync")));
         await Assert.That(result).IsEqualTo("0:1:2:2:4");
     }
 
@@ -106,12 +114,13 @@ public partial class ExecutorGeneratorTests
     public async Task LocalInitializersKeepDeclarationOrder()
     {
         var result = await Run("""
-            internal readonly ref partial struct Pair(int a, int b) : IStep<int> { public int Execute(CancellationToken token) => a * 10 + b; }
-            [CompositeStep]            public readonly ref partial struct Example
+            internal static class PairSteps { [Step] internal static int Pair(int a, int b, CancellationToken token) => a * 10 + b; }
+            public static partial class Example
             {
                 public static string Order = "";
                 private static int Next(string name) { Order += name; return Order.Length; }
-                private void Configuration(StepGraph p)
+                [Pipeline]
+                public static void Configuration(StepGraph p)
                 {
                     var first = Next("a");
                     var second = Next("b");
@@ -120,7 +129,7 @@ public partial class ExecutorGeneratorTests
             }
             """ + AsyncScenario("""
                 using var services = new ServiceCollection().BuildServiceProvider();
-                var result = new Example.Pipeline().Execute();
+                var result = new Example.ConfigurationPipeline().Execute();
                 return $"{Example.Order}:{result.Pair}";
                 """));
         await Assert.That(result).IsEqualTo("ab:21");
@@ -129,16 +138,17 @@ public partial class ExecutorGeneratorTests
     public async Task NamedArgumentsKeepSourceEvaluationOrder()
     {
         var result = await Run("""
-            internal readonly ref partial struct Pair(int a, int b) : IStep<int> { public int Execute(CancellationToken token) => a * 10 + b; }
-            [CompositeStep]            public readonly ref partial struct Example
+            internal static class PairSteps { [Step] internal static int Pair(int a, int b, CancellationToken token) => a * 10 + b; }
+            public static partial class Example
             {
                 public static string Order = "";
                 private static int Next(string name) { Order += name; return Order.Length; }
-                private void Configuration(StepGraph p) { var pair = p.Pair(b: Next("b"), a: Next("a")); }
+                [Pipeline]
+                public static void Configuration(StepGraph p) { var pair = p.Pair(b: Next("b"), a: Next("a")); }
             }
             """ + AsyncScenario("""
                 using var services = new ServiceCollection().BuildServiceProvider();
-                var result = new Example.Pipeline().Execute();
+                var result = new Example.ConfigurationPipeline().Execute();
                 return $"{Example.Order}:{result.Pair}";
                 """));
         await Assert.That(result).IsEqualTo("ba:21");
@@ -148,12 +158,13 @@ public partial class ExecutorGeneratorTests
     public async Task LocalValuesAreComputedOncePerStepAndPreserveNameof()
     {
         var result = await Run(NamedSteps + """
-            internal readonly ref partial struct Text(string value) : IStep<string> { public string Execute(CancellationToken token) => value; }
-            [CompositeStep]            public readonly ref partial struct Example
+            internal static class TextSteps { [Step] internal static string Text(string value, CancellationToken token) => value; }
+            public static partial class Example
             {
                 public static int Calls;
                 private static int Next() => ++Calls;
-                private void Configuration(StepGraph p)
+                [Pipeline]
+                public static void Configuration(StepGraph p)
                 {
                     var seed = Next();
                     var offset = seed + 1;
@@ -163,7 +174,7 @@ public partial class ExecutorGeneratorTests
             }
             """ + AsyncScenario("""
                 using var services = new ServiceCollection().BuildServiceProvider();
-                var pipeline = new Example.Pipeline();
+                var pipeline = new Example.ConfigurationPipeline();
                 var first = pipeline.Execute();
                 var second = pipeline.Execute();
                 return $"{first.Sum}:{second.Sum}:{second.Text}:{Example.Calls}";
@@ -175,13 +186,14 @@ public partial class ExecutorGeneratorTests
     public async Task AliasesAndExtensionExpressionsRemainBound()
     {
         var result = await Run("using M = System.Math; using System.Linq;\n" + NamedSteps + """
-            [CompositeStep]            public readonly ref partial struct Example
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { var sum = p.Add(M.Abs(-4), new[] { 1, 2 }.Sum()); }
+                [Pipeline]
+                public static void Configuration(StepGraph p) { var sum = p.Add(M.Abs(-4), new[] { 1, 2 }.Sum()); }
             }
             """ + AsyncScenario("""
                 using var services = new ServiceCollection().BuildServiceProvider();
-                return (new Example.Pipeline().Execute()).Sum.ToString();
+                return (new Example.ConfigurationPipeline().Execute()).Sum.ToString();
                 """));
         await Assert.That(result).IsEqualTo("7");
     }
@@ -192,7 +204,7 @@ public partial class ExecutorGeneratorTests
     [Arguments("int Next() => 1; p.Add(Next(), 2);")]
     public async Task ExecutableConfigurationStatementsAreRejected(string body)
     {
-        var generated = await Generate(NamedSteps + "[CompositeStep] public readonly ref partial struct Example { private void Configuration(StepGraph p) { " + body + " } }");
+        var generated = await Generate(NamedSteps + "public static partial class Example { public static void Configuration(StepGraph p) { " + body + " } }");
         await Assert.That(generated.Diagnostics.Any(item => item.Id == "TTP009")).IsTrue();
     }
 
@@ -200,16 +212,19 @@ public partial class ExecutorGeneratorTests
     public async Task GeneratedCodeHasNoConfigurationCallOrRuntimeCapture()
     {
         var generated = await Generate(NamedSteps + """
-            [CompositeStep]            public readonly ref partial struct Example
+            public static partial class Example
             {
-                private void Configuration(StepGraph p) { var sum = p.Add(40, 2); }
+                [Pipeline]
+                public static void Configuration(StepGraph p) { var sum = p.Add(40, 2); }
             }
             """);
         await NoErrors(generated);
-        await Assert.That(generated.GeneratedSource.Contains("Configuration(") || generated.GeneratedSource.Contains("IConfiguration") ||
-            generated.GeneratedSource.Contains("_capture") || generated.GeneratedSource.Contains("GetFixedValue")).IsFalse();
-        await Assert.That(generated.GeneratedSource.Contains("new global::Add(40, 2)")).IsTrue();
-        await Assert.That(generated.GeneratedSource.Contains("RunSum0(")).IsTrue();
+        await Assert.That(generated.GeneratedSource.Contains("IConfiguration") ||
+            generated.GeneratedSource.Contains("_capture") ||
+            generated.GeneratedSource.Contains("GetFixedValue")).IsFalse();
+        await Assert.That(generated.GeneratedSource.Contains(
+            "global::AddStepMethods.Add(40, 2, executionToken)")).IsTrue();
+        await Assert.That(generated.GeneratedSource.Contains("Run13_Configuration_3_Sum_0(")).IsTrue();
     }
 }
 

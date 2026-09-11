@@ -23,14 +23,16 @@ public partial class ExecutorGeneratorTests
         """;
     private const string SimpleSteps = """
         public record Inputs(int Value);
-        internal readonly ref partial struct AddStep(int a, int b) : IAsyncStep<int>
+        internal static class SimpleStepMethods
         {
-            public Task<int> ExecuteAsync(CancellationToken token) => Task.FromResult(a + b);
+            [Step]
+            internal static Task<int> AddStep(int a, int b, CancellationToken token) =>
+                Task.FromResult(a + b);
         }
         """;
     private static readonly ImmutableArray<MetadataReference> References =
         ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-        .Append(typeof(IAsyncStep<>).Assembly.Location).Append(typeof(ServiceCollection).Assembly.Location)
+        .Append(typeof(StepGraph).Assembly.Location).Append(typeof(ServiceCollection).Assembly.Location)
         .Append(typeof(Microsoft.Extensions.Logging.ILogger).Assembly.Location)
         .Append(typeof(IServiceCollection).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
         .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path)).ToImmutableArray();
@@ -57,7 +59,7 @@ public partial class ExecutorGeneratorTests
         GeneratorDriver driver = CSharpGeneratorDriver.Create([new PipelineExecutorGenerator().AsSourceGenerator()], parseOptions: ParseOptions);
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var generated, out var generatorDiagnostics);
         var analyzerDiagnostics = await generated.WithAnalyzers(
-            ImmutableArray.Create<DiagnosticAnalyzer>(new PipelineAnalyzer(), new GeneratedStepContextSuppressor()))
+            ImmutableArray.Create<DiagnosticAnalyzer>(new PipelineAnalyzer()))
             .GetAllDiagnosticsAsync();
         return new GeneratedCompilation(generated, generatorDiagnostics.AddRange(analyzerDiagnostics),
             string.Join("\n", driver.GetRunResult().GeneratedTrees.Select(tree => tree.ToString())));

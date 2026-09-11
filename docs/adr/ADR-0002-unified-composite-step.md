@@ -1,6 +1,6 @@
 # ADR-0002：以 ref-struct Composite Step 统一 Pipeline 组合
 
-- 状态：Accepted
+- 状态：Superseded
 - 日期：2026-09-08
 - 决策所有者：library maintainers
 - 批准来源：用户于 2026-09-08 在原始 Codex 任务中明确确认薄 Pipeline DI 门面设计，并要求继续实现及验证 benchmark。
@@ -9,7 +9,7 @@
 - 适用原则：[P1、P2、P3、P4、P6、P7](../principles/README.md)
 - 相关决策：[ADR-0001 generated Step context](ADR-0001-generated-step-context.md)
 - 替代：无
-- 被替代：无
+- 被替代：由 [ADR-0004](ADR-0004-function-declared-composite-and-pipeline.md) 完整替代
 
 ## 决策摘要
 

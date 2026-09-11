@@ -59,15 +59,25 @@ using Microsoft.Extensions.DependencyInjection;
 using TedToolkit.Orchestration.Pipeline;
 using TedToolkit.Orchestration.Pipeline.Attributes;
 
-var pipeline = new Sum.Pipeline();
+var pipeline = new App.RunPipeline();
 var results = pipeline.Execute(leftValue: 40);
 
-Console.WriteLine(results.Add); // 42
+Console.WriteLine(results.Sum.Add); // 42
 
-[CompositeStep]
-public readonly ref partial struct Sum(int leftValue)
+public static partial class App
 {
-    private void Configuration(StepGraph pipeline)
+    [Pipeline]
+    public static void Run(StepGraph pipeline, int leftValue)
+    {
+        var sum = pipeline.Calculate(leftValue);
+    }
+}
+
+public static partial class Sum
+{
+    // A function whose first parameter is StepGraph is a Composite Step.
+    // It remains reusable without a Pipeline attribute or generated facade class.
+    public static void Calculate(StepGraph pipeline, int leftValue)
     {
         var left = pipeline.Value(leftValue);
         var right = pipeline.Value(2);
@@ -75,20 +85,19 @@ public readonly ref partial struct Sum(int leftValue)
     }
 }
 
-internal readonly ref partial struct Value(int value) : IStep<int>
+internal static class Steps
 {
-    public int Execute(CancellationToken token = default) => value;
-}
+    [Step]
+    internal static int Value(int value, CancellationToken token) => value;
 
-internal readonly ref partial struct Add(int a, int b) : IStep<int>
-{
-    public int Execute(CancellationToken token = default) => a + b;
+    [Step]
+    internal static int Add(int a, int b, CancellationToken token) => a + b;
 }
 ```
 
-The Composite primary-constructor parameters are its typed inputs. The generator recognizes the fixed value `2`, binds both results into the named `add` node, and generates the typed `Results.Add` property. An asynchronous child changes the entry point to `ExecuteAsync`; completion-only callers use `ExecuteWithoutResults` or `ExecuteWithoutResultsAsync`. A Composite can also be registered in another `StepGraph`; only a root caller uses the generated nested `Pipeline` facade.
+`Sum.Calculate` is a Composite Step, identified by its leading `StepGraph` parameter rather than an Attribute. Its function name is also the graph factory name, so `App.Run` composes it with `pipeline.Calculate(...)`. The parameters after `StepGraph` are its typed execution inputs. The generator recognizes the fixed value `2`, binds both results into the named `add` node, and generates `CalculateResult.Add`; the root result exposes it as `RunResult.Sum.Add`. A static partial class may group several differently named Composite functions and may mark several of them `[Pipeline]`; each receives its own Result, execution overload, and optional Pipeline class. Same-name Composite overloads are rejected. An asynchronous child changes the single entry point to `ExecuteAsync`. A Pipeline exposes one natural entry point: value Leaves return their business result, `void`/non-generic `Task` Leaves return `void`/`Task`, and Composites return their generated named result.
 
-Node-specific orchestration stays in `Configuration`:
+Node-specific orchestration stays in the Composite declaration function:
 
 ```csharp
 var prepare = pipeline.Prepare();
@@ -99,22 +108,24 @@ var work = pipeline.Work()
     .WithDisplayName("Main work");
 ```
 
-`DependsOn` waits for successful completion without transporting data. Retry, timeout, and display identity belong only to that registration; omitted policy means zero retries and infinite timeout. Every Step receives a generated required `DisplayName` property. Mark a Step with `[StepLogger]` when it also needs a generated `ILogger` whose category contains the Step type and display name.
+`DependsOn` waits for successful completion without transporting data. Retry, timeout, and display identity belong only to that registration; omitted policy means zero retries and infinite timeout. A Step or Composite declaration requests services by annotating parameters with `[FromServices]`. An unkeyed non-generic `ILogger` is created from `ILoggerFactory` with category `<fully-qualified method>[<display path>]`; nested paths join each Composite/Step segment with `/`. `WithDisplayName` replaces only its current node's segment. Display names and paths are never exposed to business methods.
 
-Retrying a Composite registration reruns its complete child graph, so already-completed child side effects may occur again. A service-requiring root `Pipeline` retains the caller-provided `IServiceProvider`; registering that facade as a singleton therefore explicitly selects the root provider, and the library neither creates nor repairs scopes.
+Retrying a Composite registration reruns its complete child graph, so already-completed child side effects may occur again. Services for the Composite boundary are resolved once before its retry loop. A service-requiring root Pipeline facade retains the caller-provided `IServiceProvider`; registering that facade as a singleton therefore explicitly selects the root provider, and the library neither creates nor repairs scopes.
 
-Factory overload resolution distinguishes same-named Steps when their signatures differ. If public Steps from different assemblies have the same name and signature, call the generated namespace-qualified factory class explicitly (for example, `Alpha_IncrementExtensions.Increment(pipeline, value)`) to select the exact Step symbol.
+Step methods must have a unique name within their containing static class. Different containers may declare the same factory name; when extension lookup is ambiguous, call the generated namespace-qualified factory class explicitly to select the exact Step symbol.
 
 Pipeline also supports:
 
 - independent branches that start without waiting for unrelated work;
-- constructor parameters resolved from ordinary or keyed DI via `[FromServices]`;
+- method parameters resolved from ordinary or keyed DI via `[FromServices]`;
 - per-node retry and cooperative timeout through Configuration modifiers;
 - control-only dependencies and immutable display metadata;
 - caller cancellation and draining of all work started by a parallel invocation;
 - typed intermediate results without an untyped runtime result store.
 
-Configuration must remain statically analyzable: register each step in an unconditional statement, declare dependencies before consumers, and move dynamic behavior into a step. Read [declaration and execution semantics](docs/architecture/named-executors.md) for the full contract.
+The Composite declaration function must remain statically analyzable: register each step in an unconditional statement, declare dependencies before consumers, and move dynamic behavior into a step. Read [declaration and execution semantics](docs/architecture/named-executors.md) for the full contract.
+
+Upgrading from the former Step/Composite object API? Follow the [function-declared Step migration guide](docs/migrations/function-declared-steps.md).
 
 ## Quick start: StateMachine
 
@@ -268,6 +279,7 @@ Read the benchmark-specific READMEs before collecting measurements:
 | `docs/product/` | Durable product purpose and boundaries |
 | `docs/principles/` | Recurring engineering defaults |
 | `docs/architecture/` | Current compile-time and runtime semantics |
+| `docs/migrations/` | Consumer migration guides for intentional API breaks |
 | `Build/` | Repository configuration for the shared TedToolkit build pipeline |
 
 ## License

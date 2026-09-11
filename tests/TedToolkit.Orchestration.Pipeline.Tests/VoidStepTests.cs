@@ -46,20 +46,21 @@ public class VoidStepTests
             _execute = execute;
             var milliseconds = timeout is null ? -1 : checked((int)timeout.Value.TotalMilliseconds);
             _run = ExecutorGeneratorTests.Compile<Func<Func<CancellationToken, Task>, CancellationToken, Task>>($$"""
-                internal readonly ref partial struct Effect(Func<CancellationToken, Task> operation) : IAsyncStep
+                internal static class EffectStepMethods
                 {
-                    public Task ExecuteAsync(CancellationToken token) => operation(token);
+                    [Step]
+                    internal static Task Effect(Func<CancellationToken, Task> operation, CancellationToken token) => operation(token);
                 }
-                [CompositeStep]
-                public readonly ref partial struct EffectPipeline(Func<CancellationToken, Task> operation)
+                public static partial class EffectPipeline
                 {
-                    private void Configuration(StepGraph pipeline) { pipeline.Effect(operation).WithRetry({{retries}}).WithTimeout({{milliseconds}}); }
+                    [Pipeline]
+                    public static void Configuration(StepGraph pipeline, Func<CancellationToken, Task> operation) { pipeline.Effect(operation).WithRetry({{retries}}).WithTimeout({{milliseconds}}); }
                 }
                 public static class Scenario
                 {
                     public static Task Run(Func<CancellationToken, Task> operation, CancellationToken token)
                     {
-                        return new EffectPipeline.Pipeline().ExecuteWithoutResultsAsync(operation, token);
+                        return new EffectPipeline.ConfigurationPipeline().ExecuteAsync(operation, token);
                     }
                 }
                 """);

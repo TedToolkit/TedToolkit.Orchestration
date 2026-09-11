@@ -305,20 +305,21 @@ public class StepTests
             _execute = execute;
             var milliseconds = timeout is null ? -1 : checked((int)timeout.Value.TotalMilliseconds);
             _run = ExecutorGeneratorTests.Compile<Func<Func<CancellationToken, Task<int>>, CancellationToken, Task<int>>>($$"""
-                internal readonly ref partial struct PolicyStep(Func<CancellationToken, Task<int>> operation) : IAsyncStep<int>
+                internal static class PolicyStepStepMethods
                 {
-                    public Task<int> ExecuteAsync(CancellationToken token) => operation(token);
+                    [Step]
+                    internal static Task<int> PolicyStep(Func<CancellationToken, Task<int>> operation, CancellationToken token) => operation(token);
                 }
-                [CompositeStep]
-                public readonly ref partial struct PolicyPipeline(Func<CancellationToken, Task<int>> operation)
+                public static partial class PolicyPipeline
                 {
-                    private void Configuration(StepGraph pipeline) { var node = pipeline.PolicyStep(operation).WithRetry({{retries}}).WithTimeout({{milliseconds}}); }
+                    [Pipeline]
+                    public static void Configuration(StepGraph pipeline, Func<CancellationToken, Task<int>> operation) { var node = pipeline.PolicyStep(operation).WithRetry({{retries}}).WithTimeout({{milliseconds}}); }
                 }
                 public static class Scenario
                 {
                     public static async Task<int> Run(Func<CancellationToken, Task<int>> operation, CancellationToken token)
                     {
-                        var results = await new PolicyPipeline.Pipeline().ExecuteAsync(operation, token);
+                        var results = await new PolicyPipeline.ConfigurationPipeline().ExecuteAsync(operation, token);
                         return results.Node;
                     }
                 }

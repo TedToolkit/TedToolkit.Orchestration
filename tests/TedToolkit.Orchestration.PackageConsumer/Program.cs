@@ -14,7 +14,7 @@ public static class Program
             .AddSingleton<IOffset, Offset>()
             .BuildServiceProvider();
 
-        var result = new Root.Pipeline(services).Execute(40);
+        var result = new Root.ConfigurationPipeline(services).Execute(40);
         var machine = new OrderMachine();
         await machine.CompleteAsync();
         if (result.Inner.Adjusted != 42 || machine.State != OrderState.Completed)
@@ -34,31 +34,33 @@ public sealed class Offset : IOffset
     public int Value => 2;
 }
 
-[StepLogger]
-internal readonly ref partial struct AddOffset(
-    int value,
-    [FromServices] IOffset offset) : IStep<int>
+internal static class PackageSteps
 {
-    public int Execute(CancellationToken token)
+    [Step]
+    internal static int AddOffset(
+        int value,
+        [FromServices] IOffset offset,
+        [FromServices] ILogger logger,
+        CancellationToken token)
     {
-        Logger.LogDebug("Executing {DisplayName}", DisplayName);
+        logger.LogDebug("Executing package leaf");
         return value + offset.Value;
     }
 }
 
-[CompositeStep]
-public readonly ref partial struct Inner(int value)
+public static partial class Inner
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int value)
     {
         var adjusted = steps.AddOffset(value).WithDisplayName("Package leaf");
     }
 }
 
-[CompositeStep]
-public readonly ref partial struct Root(int value)
+public static partial class Root
 {
-    private void Configuration(StepGraph steps)
+    [Pipeline]
+    public static void Configuration(StepGraph steps, int value)
     {
         var inner = steps.Inner(value);
     }
