@@ -14,7 +14,7 @@
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="Sourcy.DotNet" Version="1.1.1" />
     <PackageVersion Include="Stateless" Version="5.20.1" />
-    <PackageVersion Include="TedToolkit.RoslynHelper" Version="2026.9.9" />
+    <PackageVersion Include="TedToolkit.RoslynHelper" Version="2026.11.11" />
     <PackageVersion Include="TUnit" Version="1.63.0" />
   </ItemGroup>
 </Project>
