@@ -21,4 +21,9 @@
           PackagePath="analyzers/dotnet/cs/"
           Visible="false" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../.agents/skills/declare-typed-state-machines/**/*"
+          Pack="true" PackagePath="skills/declare-typed-state-machines/" />
+  </ItemGroup>
 </Project>
