@@ -6,7 +6,7 @@ Strongly typed, compile-time orchestration for .NET. The repository contains two
 
 Both runtime packages include their matching analyzer and source generator. Consumers write declarations; the compiler validates them and emits direct, typed execution code.
 
-Both packages target .NET Standard 2.0, .NET Standard 2.1, .NET Framework 4.7.2 and 4.8, and .NET 6 through .NET 10.
+Both packages target .NET Standard 2.0, .NET Standard 2.1, .NET Framework 4.7.2 and 4.8, and .NET 6 through .NET 11.
 
 ## Choose a package
 
@@ -235,7 +235,7 @@ Diagnostic severity can be configured through standard `.editorconfig` settings.
 
 ### Prerequisites
 
-- .NET 10 SDK
+- .NET 11 SDK
 - Git with submodule support
 
 Clone with submodules, then run the repository's TedToolkit build pipeline:

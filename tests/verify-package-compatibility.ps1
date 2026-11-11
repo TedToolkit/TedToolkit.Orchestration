@@ -12,7 +12,7 @@ foreach ($path in @($publishDirectory, $packageCache)) {
     }
 }
 
-$frameworks = @('netstandard2.0', 'netstandard2.1', 'net472', 'net48', 'net6.0', 'net7.0', 'net8.0', 'net9.0', 'net10.0')
+$frameworks = @('netstandard2.0', 'netstandard2.1', 'net472', 'net48', 'net6.0', 'net7.0', 'net8.0', 'net9.0', 'net10.0', 'net11.0')
 $consumer = Join-Path $repositoryRoot 'tests\TedToolkit.Orchestration.PackageConsumer\TedToolkit.Orchestration.PackageConsumer.csproj'
 $nugetConfig = Join-Path $repositoryRoot 'tests\TedToolkit.Orchestration.PackageConsumer\NuGet.config'
 $pipelineProject = Join-Path $repositoryRoot 'src\TedToolkit.Orchestration.Pipeline\TedToolkit.Orchestration.Pipeline.csproj'
@@ -112,7 +112,7 @@ try {
         }
     }
 
-    & dotnet publish $consumer --framework net10.0 --configuration Release --runtime win-x64 --self-contained true `
+    & dotnet publish $consumer --framework net11.0 --configuration Release --runtime win-x64 --self-contained true `
         --output $publishDirectory --packages $packageCache --configfile $nugetConfig
     if ($LASTEXITCODE -ne 0) { throw "Trimmed package consumer publish failed with exit code $LASTEXITCODE." }
 
