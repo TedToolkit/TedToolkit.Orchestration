@@ -8,5 +8,16 @@ permissions:
 
 jobs:
   run-build-project:
+    if: github.ref != 'refs/heads/main'
     uses: TedToolkit/TedToolkit/.github/workflows/build.yml@development
-    secrets: inherit
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: TedToolkit/TedToolkit/.github/actions/publish-nuget@c214476777e4d80d8b060b028a5bf5f514e7d028
+        with:
+          nuget-user: ArchiTed
