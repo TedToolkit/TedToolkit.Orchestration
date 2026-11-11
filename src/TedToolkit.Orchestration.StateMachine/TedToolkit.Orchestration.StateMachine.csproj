@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="../../externals/TedToolkit/props/NugetPackage.props" />
-  <Import Project="../../externals/TedToolkit/props/AlmostAllFrameworks.props" />
+  <Import Project="NugetPackage.props" Sdk="TedToolkit.Build.Sdk" />
+  <Import Project="AlmostAllFrameworks.props" Sdk="TedToolkit.Build.Sdk" />
   <PropertyGroup>
     <IsTrimmable Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net6.0'))">true</IsTrimmable>
     <Description>Compile-time state machine orchestration library.</Description>
