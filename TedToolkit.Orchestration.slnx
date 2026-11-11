@@ -3,7 +3,7 @@
     <File Path=".editorconfig" />
     <File Path=".gitattributes" />
     <File Path=".gitignore" />
-    <File Path=".gitmodules" />
+
     <File Path="COPYING" />
     <File Path="COPYING.LESSER" />
     <File Path="Directory.Build.props" />
@@ -14,11 +14,6 @@
   </Folder>
   <Folder Name="/.github/workflows/">
     <File Path=".github/workflows/build.yml" />
-  </Folder>
-  <Folder Name="/Build/">
-    <Project Path="Build/Build.csproj">
-      <Build Project="false" />
-    </Project>
   </Folder>
   <Folder Name="/playground/">
     <Project Path="playground/TedToolkit.Orchestration.Pipeline.Playground/TedToolkit.Orchestration.Pipeline.Playground.csproj">
