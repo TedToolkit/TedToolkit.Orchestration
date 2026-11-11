@@ -6,7 +6,7 @@ Strongly typed, compile-time orchestration for .NET. The repository contains two
 
 Both runtime packages include their matching analyzer and source generator. Consumers write declarations; the compiler validates them and emits direct, typed execution code.
 
-Both packages target .NET Standard 2.0, .NET Standard 2.1, .NET Framework 4.7.2 and 4.8, and .NET 6 through .NET 10.
+Both packages target .NET Standard 2.0, .NET Standard 2.1, .NET Framework 4.7.2 and 4.8, and .NET 6 through .NET 11.
 
 ## Choose a package
 
@@ -235,15 +235,15 @@ Diagnostic severity can be configured through standard `.editorconfig` settings.
 
 ### Prerequisites
 
-- .NET 10 SDK
-- Git with submodule support
+- .NET 11 SDK
+- Git
 
-Clone with submodules, then run the repository's TedToolkit build pipeline:
+Clone the repository and build the solution:
 
 ```shell
-git clone --recurse-submodules https://github.com/TedToolkit/TedToolkit.Orchestration.git
+git clone https://github.com/TedToolkit/TedToolkit.Orchestration.git
 cd TedToolkit.Orchestration
-dotnet run --project Build/Build.csproj --configuration Release
+dotnet build TedToolkit.Orchestration.slnx -c Release
 ```
 
 Focused commands:
@@ -280,7 +280,7 @@ Read the benchmark-specific READMEs before collecting measurements:
 | `docs/principles/` | Recurring engineering defaults |
 | `docs/architecture/` | Current compile-time and runtime semantics |
 | `docs/migrations/` | Consumer migration guides for intentional API breaks |
-| `Build/` | Repository configuration for the shared TedToolkit build pipeline |
+| `global.json` | Version of the MSBuild SDK that provides shared configuration |
 
 ## License
 

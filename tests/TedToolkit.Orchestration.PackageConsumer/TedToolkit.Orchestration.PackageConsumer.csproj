@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="../../externals/TedToolkit/props/AlmostAllFrameworks.props" />
+  <Import Project="AlmostAllFrameworks.props" Sdk="TedToolkit.Build.Sdk" />
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworks);net11.0</TargetFrameworks>
+  </PropertyGroup>
   <PropertyGroup>
     <OutputType Condition="'$(TargetFramework)' != 'netstandard2.0' And '$(TargetFramework)' != 'netstandard2.1'">Exe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>
