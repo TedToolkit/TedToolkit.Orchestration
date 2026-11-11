@@ -2,6 +2,9 @@
   <Import Project="NugetPackage.props" Sdk="TedToolkit.Build.Sdk" />
   <Import Project="AlmostAllFrameworks.props" Sdk="TedToolkit.Build.Sdk" />
   <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworks);net11.0</TargetFrameworks>
+  </PropertyGroup>
+  <PropertyGroup>
     <IsTrimmable Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net6.0'))">true</IsTrimmable>
     <Description>Compile-time state machine orchestration library.</Description>
     <PackageLicenseExpression>LGPL-3.0-only</PackageLicenseExpression>

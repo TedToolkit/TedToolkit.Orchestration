@@ -9,7 +9,7 @@ permissions:
 jobs:
   run-build-project:
     if: github.ref != 'refs/heads/main'
-    uses: TedToolkit/TedToolkit/.github/workflows/build.yml@a29734aa1cebfef142bd248a6259f8b9f937430b
+    uses: TedToolkit/TedToolkit/.github/workflows/build.yml@b45c29c681eecdec42d23c3324e474a78f1902d9
 
   publish:
     if: github.ref == 'refs/heads/main'
@@ -18,7 +18,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: TedToolkit/TedToolkit/.github/actions/publish-nuget@a29734aa1cebfef142bd248a6259f8b9f937430b
+      - uses: TedToolkit/TedToolkit/.github/actions/publish-nuget@b45c29c681eecdec42d23c3324e474a78f1902d9
         with:
           nuget-user: ArchiTed
 
@@ -30,4 +30,4 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: TedToolkit/TedToolkit/.github/actions/maintain-release-pr@a29734aa1cebfef142bd248a6259f8b9f937430b
+      - uses: TedToolkit/TedToolkit/.github/actions/maintain-release-pr@b45c29c681eecdec42d23c3324e474a78f1902d9
