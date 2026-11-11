@@ -243,7 +243,7 @@ Clone with submodules, then run the repository's TedToolkit build pipeline:
 ```shell
 git clone --recurse-submodules https://github.com/TedToolkit/TedToolkit.Orchestration.git
 cd TedToolkit.Orchestration
-dotnet run --project Build/Build.csproj --configuration Release
+dotnet build TedToolkit.Orchestration.slnx -c Release
 ```
 
 Focused commands:
